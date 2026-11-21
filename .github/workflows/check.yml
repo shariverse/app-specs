@@ -1,0 +1,16 @@
+name: Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 生成スクリプトのテスト
+        run: python3 -m unittest discover -s scripts -v
+      - name: 全アプリ・全 OS の生成と、README の対応表
+        run: python3 scripts/generate_spec.py check

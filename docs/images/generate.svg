@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 500" width="960" height="500" role="img" aria-labelledby="title desc">
+  <title id="title">1 つのファイルが OS ごとに分かれる</title>
+  <desc id="desc">機能のファイルに書いた status と only の印で、iOS 版と Android 版の docs/spec/ に、その OS に合う中身だけを出す。予定の機能には注記が付く。</desc>
+  <style>
+    text { font-family: "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif; }
+    .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans Mono CJK JP", monospace; }
+    .bg { fill: #FBF8F3; }
+    .card { fill: #FFFFFF; }
+    .ink { fill: #2B2A33; }
+    .muted { fill: #6B6875; }
+    .sal-s { stroke: #C2492A; } .sal-f { fill: #C2492A; } .sal-soft { fill: #FBE6DF; }
+    .blue-s { stroke: #2F6FD6; } .blue-f { fill: #2459B8; } .blue-soft { fill: #E3ECFB; }
+    .green-s { stroke: #1A7A50; } .green-f { fill: #1A7A50; } .green-soft { fill: #DDF1E7; }
+    .on-accent { fill: #FFFFFF; }
+    .arrow { fill: none; stroke: #6B6875; stroke-width: 2; }
+    .head { fill: #6B6875; }
+    @media (prefers-color-scheme: dark) {
+      .bg { fill: #18171C; }
+      .card { fill: #232129; }
+      .ink { fill: #EEEAE4; }
+      .muted { fill: #A9A5AF; }
+      .sal-s { stroke: #F08C70; } .sal-f { fill: #F08C70; } .sal-soft { fill: #3D2721; }
+      .blue-s { stroke: #79A6F2; } .blue-f { fill: #79A6F2; } .blue-soft { fill: #1E2A3F; }
+      .green-s { stroke: #5CC497; } .green-f { fill: #5CC497; } .green-soft { fill: #183027; }
+      .on-accent { fill: #18171C; }
+      .arrow { stroke: #A9A5AF; }
+      .head { fill: #A9A5AF; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M0 0 L10 5 L0 10 z"/>
+    </marker>
+  </defs>
+
+  <rect class="bg" width="960" height="500" rx="20"/>
+
+  <text class="ink" x="32" y="46" font-size="21" font-weight="700">1 つのファイルが OS ごとに分かれる</text>
+  <text class="muted" x="32" y="72" font-size="13.5">status と only の印を見て、その OS に合う中身だけを出す</text>
+
+  <!-- 元のファイル -->
+  <text class="muted mono" x="32" y="104" font-size="12">app-specs/&lt;app&gt;/features/07-photo-crop.md</text>
+  <rect class="card sal-s" x="32" y="114" width="430" height="330" rx="14" stroke-width="2"/>
+
+  <rect class="sal-soft" x="44" y="128" width="406" height="98" rx="6"/>
+  <text class="ink mono" x="56" y="146" font-size="13">---</text>
+  <text class="ink mono" x="56" y="165" font-size="13">status:</text>
+  <text class="ink mono" x="72" y="184" font-size="13">ios: shipped</text>
+  <text class="ink mono" x="72" y="203" font-size="13">android: planned</text>
+  <text class="ink mono" x="56" y="220" font-size="13">---</text>
+  <text class="sal-f" x="440" y="165" font-size="11.5" font-weight="700" text-anchor="end">OS ごとの状態</text>
+
+  <text class="ink mono" x="56" y="250" font-size="13" font-weight="700"># 写真の調整</text>
+  <text class="ink mono" x="56" y="276" font-size="13">共通の本文。</text>
+
+  <rect class="blue-soft" x="44" y="290" width="406" height="64" rx="6"/>
+  <text class="blue-f mono" x="56" y="309" font-size="13">&lt;!-- only: ios --&gt;</text>
+  <text class="ink mono" x="56" y="328" font-size="13">iOS だけの段落。</text>
+  <text class="blue-f mono" x="56" y="347" font-size="13">&lt;!-- /only --&gt;</text>
+
+  <rect class="blue-soft" x="44" y="366" width="406" height="26" rx="6"/>
+  <text class="ink mono" x="56" y="384" font-size="13">| 単位 | pt | <tspan class="blue-f">&lt;!-- only: ios --&gt;</tspan></text>
+  <rect class="green-soft" x="44" y="398" width="406" height="26" rx="6"/>
+  <text class="ink mono" x="56" y="416" font-size="13">| 単位 | dp | <tspan class="green-f">&lt;!-- only: android --&gt;</tspan></text>
+
+  <!-- 矢印 -->
+  <path class="arrow" d="M462 279 C 500 279, 496 182, 530 182" marker-end="url(#arrow)"/>
+  <path class="arrow" d="M462 279 C 500 279, 496 370, 530 370" marker-end="url(#arrow)"/>
+
+  <!-- iOS -->
+  <text class="blue-f" x="540" y="104" font-size="12.5" font-weight="700">iOS 版の docs/spec/</text>
+  <rect class="card blue-s" x="536" y="114" width="392" height="140" rx="14" stroke-width="2"/>
+  <text class="ink mono" x="556" y="146" font-size="13" font-weight="700"># 写真の調整</text>
+  <text class="ink mono" x="556" y="174" font-size="13">共通の本文。</text>
+  <text class="ink mono" x="556" y="200" font-size="13">iOS だけの段落。</text>
+  <text class="ink mono" x="556" y="226" font-size="13">| 単位 | pt |</text>
+
+  <!-- Android -->
+  <text class="green-f" x="540" y="288" font-size="12.5" font-weight="700">Android 版の docs/spec/</text>
+  <rect class="card green-s" x="536" y="298" width="392" height="146" rx="14" stroke-width="2"/>
+  <text class="ink mono" x="556" y="330" font-size="13" font-weight="700"># 写真の調整</text>
+  <rect class="green-soft" x="548" y="340" width="368" height="28" rx="6"/>
+  <text class="green-f" x="560" y="359" font-size="12.5" font-weight="700">ⓘ Android 版では、まだ作っていない（予定）</text>
+  <text class="ink mono" x="556" y="394" font-size="13">共通の本文。</text>
+  <text class="ink mono" x="556" y="420" font-size="13">| 単位 | dp |</text>
+
+  <!-- 凡例 -->
+  <text class="muted" x="32" y="476" font-size="12.5">status: <tspan class="ink" font-weight="700">shipped</tspan> はそのまま出す ・ <tspan class="ink" font-weight="700">planned</tspan> は注記を付けて出す ・ <tspan class="ink" font-weight="700">undecided</tspan> と <tspan class="ink" font-weight="700">none</tspan> は出さない</text>
+</svg>

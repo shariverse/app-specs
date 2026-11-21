@@ -1,0 +1,9 @@
+{
+  "oshikatsu-countdown": {
+    "name": "推し活カウントダウン",
+    "repositories": {
+      "ios": "shariverse/oshikatsu-countdown-ios",
+      "android": "shariverse/oshikatsu-countdown-android"
+    }
+  }
+}

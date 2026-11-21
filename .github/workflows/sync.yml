@@ -1,0 +1,78 @@
+name: Sync
+
+# main の仕様を各 OS のリポジトリの docs/spec/ に生成し、spec-sync ブランチの PR にする。
+# 他のリポジトリに push するため、GITHUB_TOKEN ではなく GitHub App のトークンを使う。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+jobs:
+  targets:
+    # GitHub App を用意するまでは、失敗させずに飛ばす
+    if: vars.SPEC_SYNC_APP_ID != ''
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: list
+        run: echo "matrix=$(python3 scripts/generate_spec.py targets)" >> "$GITHUB_OUTPUT"
+
+  sync:
+    needs: targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: app-specs
+
+      - id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.SPEC_SYNC_APP_ID }}
+          private-key: ${{ secrets.SPEC_SYNC_APP_PRIVATE_KEY }}
+          owner: shariverse
+          repositories: ${{ matrix.repository_name }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repository }}
+          token: ${{ steps.token.outputs.token }}
+          path: target
+
+      - name: docs/spec/ を生成
+        run: >-
+          python3 app-specs/scripts/generate_spec.py generate
+          --app "${{ matrix.app }}"
+          --platform "${{ matrix.platform }}"
+          --out target/docs/spec
+          --source-commit "${{ github.sha }}"
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          path: target
+          token: ${{ steps.token.outputs.token }}
+          sign-commits: true
+          branch: spec-sync
+          delete-branch: true
+          add-paths: docs/spec
+          commit-message: "[docs] 仕様を app-specs に合わせる"
+          title: "【DOCS】仕様を app-specs に合わせる"
+          body: |
+            [app-specs](https://github.com/shariverse/app-specs) の `${{ matrix.app }}` を ${{ matrix.platform }} 版として生成した `docs/spec/` です。
+
+            - 元のコミット: https://github.com/shariverse/app-specs/commit/${{ github.sha }}
+            - `docs/spec/` は直接編集しないでください。変えるときは app-specs に PR を出します
+
+            仕様の変更を実装するときは、このブランチ（`spec-sync`）から作業ブランチを切り、実装と一緒にマージします。
+            このブランチは app-specs が更新されるたびに作り直されるので、ここに直接コミットしないでください。

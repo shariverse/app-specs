@@ -1,0 +1,46 @@
+# 各 OS のリポジトリの .github/workflows/ に置く。
+# docs/spec/ が app-specs から生成したままか（手で直されていないか）を確かめる。
+
+name: Spec check
+
+on:
+  pull_request:
+    paths:
+      - "docs/spec/**"
+
+jobs:
+  spec-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: app
+
+      - id: source
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          source = json.load(open("app/docs/spec/.source.json", encoding="utf-8"))
+          for key in ("commit", "app", "platform"):
+              print(f"{key}={source[key]}")
+          PY
+
+      - uses: actions/checkout@v4
+        with:
+          repository: shariverse/app-specs
+          ref: ${{ steps.source.outputs.commit }}
+          path: app-specs
+
+      - run: >-
+          python3 app-specs/scripts/generate_spec.py generate
+          --app "${{ steps.source.outputs.app }}"
+          --platform "${{ steps.source.outputs.platform }}"
+          --out expected
+          --source-commit "${{ steps.source.outputs.commit }}"
+
+      - name: 生成したものと同じか
+        run: |
+          if ! diff -r expected app/docs/spec; then
+            echo "::error::docs/spec/ が app-specs から生成したものと違います。直接編集せず、app-specs に PR を出してください"
+            exit 1
+          fi
