@@ -519,6 +519,50 @@ class WriteOutputTests(unittest.TestCase):
             self.assertFalse((out / "old.md").exists())
             self.assertTrue((out / "new.md").exists())
 
+    def repository(self, directory: str) -> Path:
+        # macOS の一時フォルダは /var（/private/var へのリンク）の下にあるので、実体のパスにしてから使う
+        repository = Path(directory).resolve() / "app"
+        (repository / ".git").mkdir(parents=True)
+        (repository / ".github").mkdir()
+        return repository
+
+    def test_refuses_symlinked_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.repository(directory)
+            (repository / "docs").mkdir()
+            (repository / "docs/spec").symlink_to(repository / ".github", target_is_directory=True)
+            with self.assertRaisesRegex(spec.SpecError, "出力先の途中にシンボリックリンク"):
+                spec.write_output(repository / "docs/spec", {spec.SOURCE_FILE: self.SOURCE})
+            self.assertEqual(list((repository / ".github").iterdir()), [])
+
+    def test_refuses_symlinked_parent_in_the_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.repository(directory)
+            (repository / "docs").symlink_to(repository / ".github", target_is_directory=True)
+            for out in (repository / "docs/spec", repository / "docs/deep/spec"):
+                with self.subTest(out=out):
+                    with self.assertRaisesRegex(spec.SpecError, "出力先の途中にシンボリックリンク.*/docs$"):
+                        spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE})
+            self.assertEqual(list((repository / ".github").iterdir()), [])
+
+    def test_symlink_above_the_repository_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.repository(directory)
+            link = Path(directory).resolve() / "link"
+            link.symlink_to(repository, target_is_directory=True)
+            spec.write_output(link / "docs/spec", {spec.SOURCE_FILE: self.SOURCE})
+            self.assertTrue((repository / "docs/spec" / spec.SOURCE_FILE).exists())
+
+    def test_refuses_paths_outside_the_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "spec"
+            for path in ("../escape.md", "features/../../escape.md", "/tmp/escape.md"):
+                with self.subTest(path=path):
+                    with self.assertRaisesRegex(spec.SpecError, "出力先の外には書けません"):
+                        spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE, path: b"x"})
+            self.assertFalse(out.exists())
+            self.assertFalse((Path(directory) / "escape.md").exists())
+
     def test_refuses_to_replace_directory_with_unrelated_source_file(self) -> None:
         for content in (b"{}", b"", b"{broken", b"[]", b'"shariverse/app-specs"', json.dumps({"repository": "someone/else"}).encode()):
             with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:

@@ -562,7 +562,29 @@ def is_generated(out: Path) -> bool:
     return isinstance(source, dict) and source.get("repository") == SOURCE_REPOSITORY
 
 
+def symlink_on_the_way(out: Path) -> Path | None:
+    """出力先そのものか、出力先のあるリポジトリの中の途中のフォルダが、シンボリックリンクならそれを返す。
+
+    docs が .github を指していると、docs/spec に出したつもりで .github/spec に書いてしまう。
+    リポジトリ（.git のあるフォルダ）より上は見ない（macOS の /tmp や /var のように、OS が置くリンクがあるため）。
+    """
+    if out.is_symlink():
+        return out
+    found = None
+    for parent in out.absolute().parents:
+        if (parent / ".git").exists():
+            return found
+        if parent.is_symlink():
+            found = parent
+    return None
+
+
 def write_output(out: Path, files: dict[str, bytes]) -> None:
+    if link := symlink_on_the_way(out):
+        raise SpecError(f"{out}: 出力先の途中にシンボリックリンクがあるので、書きません: {link}")
+    for path in files:
+        if path.startswith("/") or ".." in path.split("/"):
+            raise SpecError(f"{path}: 出力先の外には書けません")
     if out.exists() and not out.is_dir():
         raise SpecError(f"{out}: 出力先がフォルダではありません")
     if out.exists() and any(out.iterdir()) and not is_generated(out):
