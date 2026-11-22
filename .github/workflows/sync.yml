@@ -55,12 +55,12 @@ jobs:
       #
       # 1. 既定のブランチの docs/spec/ が今の仕様と同じなら、docs/spec/ を触らない。下の create-pull-request は差分なしとして、
       #    spec-sync のブランチがあれば消す（開いている PR は閉じる。spec-sync で足した変更を取り消したとき、入れ終わったブランチが残っているときなど）
-      # 2. spec-sync のブランチの中身が今の仕様と同じで、Sync が作ったままなら、この OS には関係ない変更として、
+      # 2. spec-sync のブランチの中身が今の仕様と同じで、Sync が作ったままで、PR が開いていれば、この OS には関係ない変更として、
       #    PR を作り直さない（下の手順を飛ばす）。
       #    「Sync が作ったまま」は、作ったときから既定のブランチの docs/spec/ が動いておらず、docs/spec/ だけを変える 1 コミットであること
       # 3. spec-sync の中身は同じでも 2 に当たらないとき（既定のブランチの docs/spec/ が、作業ブランチ経由で入った・取り消されたなどで動いた。
-      #    spec-sync にコミットが足された）は、同じ中身・同じコミットの名前で docs/spec/ を書いて、
-      #    下の create-pull-request に渡す。create-pull-request が、既定のブランチの先頭から作り直す
+      #    PR が閉じられてブランチだけ残った。spec-sync にコミットが足された）は、同じ中身・同じコミットの名前で docs/spec/ を書いて、
+      #    下の create-pull-request に渡す。create-pull-request が、既定のブランチの先頭から作り直し、PR が無ければ作る
       # 4. それ以外（spec-sync が無い・中身が違う）は、今のコミットで生成する
       - name: docs/spec/ を生成
         id: generate
@@ -69,6 +69,7 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           SHA: ${{ github.sha }}
           REPOSITORY: ${{ matrix.repository }}
+          GH_TOKEN: ${{ steps.token.outputs.token }}
         run: |
           generate() {
             python3 app-specs/scripts/generate_spec.py generate \
@@ -93,11 +94,26 @@ jobs:
             [ "$(tree 'FETCH_HEAD~1')" = "$(tree HEAD)" ] \
               && git -C target diff --quiet 'FETCH_HEAD~1' FETCH_HEAD -- . ':(exclude)docs/spec' 2>/dev/null
           }
+          # spec-sync から既定のブランチへの PR が開いているか。調べられないときは、開いていないものとして作り直すほうに倒す
+          # （同じ中身なら、create-pull-request は push せず、PR が無いときだけ作る）
+          pr_is_open() {
+            count=$(gh pr list --repo "$REPOSITORY" --head spec-sync --base "$base" --state open \
+              --json isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length') || count=
+            case "$count" in
+              '' | *[!0-9]*)
+                echo "::warning::$REPOSITORY の spec-sync の PR が開いているかを調べられなかったので、作り直します"
+                return 1
+                ;;
+            esac
+            [ "$count" -gt 0 ]
+          }
+
           current=target/docs/spec
           if unchanged_from "$current"; then
             echo "$PLATFORM 版の仕様は既定のブランチと変わらないので、docs/spec/ を触りません（spec-sync が残っていれば、create-pull-request が消します）"
             exit 0
           fi
+          base=$(git -C target rev-parse --abbrev-ref HEAD)
           label=$SHA
 
           # spec-sync のブランチがあるか。「無い」（終了コード 2）と、通信・認証の失敗を分ける
@@ -113,12 +129,12 @@ jobs:
               mkdir -p "$RUNNER_TEMP/spec-sync"
               git -C target archive FETCH_HEAD docs/spec | tar -x -C "$RUNNER_TEMP/spec-sync"
               if unchanged_from "$RUNNER_TEMP/spec-sync/docs/spec"; then
-                if made_by_sync; then
-                  echo "$PLATFORM 版の仕様は spec-sync と変わらないので、PR を触りません"
+                if made_by_sync && pr_is_open; then
+                  echo "$PLATFORM 版の仕様は開いている spec-sync の PR と変わらないので、PR を触りません"
                   echo "skip=true" >> "$GITHUB_OUTPUT"
                   exit 0
                 fi
-                echo "$PLATFORM 版の仕様は spec-sync と変わらないが、spec-sync が Sync の作ったままではないので、同じ中身で作り直します"
+                echo "$PLATFORM 版の仕様は spec-sync と変わらないが、PR が開いていないか、spec-sync が Sync の作ったままではないので、同じ中身で作り直します"
                 label=$commit
               fi
             fi
