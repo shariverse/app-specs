@@ -587,11 +587,22 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
         raise SpecError(f"{app.key} に {platform} 版はありません")
     documents = load_documents(app)
     files: dict[str, bytes] = {}
+    claimed: dict[str, str] = {}
+
+    def claim(target: str, source: str) -> None:
+        """同じ名前に 2 つのファイルを出そうとしたら止める（後のほうが、知らせずに前のほうを上書きするため）。
+
+        大文字小文字だけが違う名前も、macOS や Windows では同じファイルになるので、重なりとして扱う。
+        """
+        other = claimed.setdefault(target.lower(), source)
+        if other != source:
+            raise SpecError(f"{app.key}: {other} と {source} が、どちらも {PLATFORM_LABELS[platform]} 版の {target} になります。名前を変えてください")
 
     for path, document in documents.items():
         target = output_path(path, platform, documents)
         if target is None:
             continue
+        claim(target, f"{app.key}/{path}")
         body = document.body
         if path == "README.md":
             body = replace_index(f"{app.key}/README.md", body, platform_index(platform, documents))
@@ -619,6 +630,7 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
                 f"{app.key}/{path}: 配れるのは Markdown（.md）と {' '.join(DISTRIBUTED_SUFFIXES)} だけです"
                 "（配らないものは notes/ か proposals/ に置く）"
             )
+        claim(path, f"{app.key}/{path}")
         files[path] = file.read_bytes()
 
     for name in SHARED_FILES:
@@ -627,6 +639,7 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
             raise SpecError(f"{name}: シンボリックリンクにはできません（リンク先の中身を配ってしまうため）")
         if not file.exists():
             continue
+        claim(name, name)
         # どのアプリにも配るファイルなので、このアプリに無い OS の only も書ける（その分は出さないだけ）
         body = filter_platform(name, file.read_text(encoding="utf-8"), platform, list(PLATFORM_LABELS))
         relative = [match.group(2) for match in links(name, body) if is_relative(match.group(2))]

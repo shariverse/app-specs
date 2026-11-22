@@ -320,6 +320,30 @@ class RenderTests(FixtureTestCase):
             ],
         )
 
+    def test_colliding_output_names_fail(self) -> None:
+        cases = {
+            "platform.md": "sample-app/platform.md と sample-app/platforms/ios.md が、どちらも iOS 版の platform.md になります",
+            "shariverse.md": "sample-app/shariverse.md と shariverse.md が、どちらも iOS 版の shariverse.md になります",
+        }
+        for path, message in cases.items():
+            with self.subTest(path=path):
+                write(self.root, "sample-app/" + path, "# 手で置いたファイル\n")
+                with self.assertRaisesRegex(spec.SpecError, message):
+                    self.render("ios")
+                (self.root / "sample-app" / path).unlink()
+
+    def test_output_names_differing_only_in_case_fail(self) -> None:
+        # 大文字小文字を区別しないファイルシステムでは 2 つを置けないので、名前を付け替えて確かめる
+        original = spec.output_path
+
+        def renamed(source: str, platform: str, documents: dict) -> "str | None":
+            return "RULES.md" if source == "product.md" else original(source, platform, documents)
+
+        spec.output_path = renamed
+        self.addCleanup(setattr, spec, "output_path", original)
+        with self.assertRaisesRegex(spec.SpecError, "sample-app/product.md と sample-app/rules.md が、どちらも iOS 版の rules.md になります"):
+            self.render("ios")
+
     def test_roadmap_and_proposals_are_not_distributed(self) -> None:
         files = self.render("ios")
         self.assertNotIn("roadmap.md", files)
