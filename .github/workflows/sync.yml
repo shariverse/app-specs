@@ -107,5 +107,6 @@ jobs:
             - 元のコミット: https://github.com/shariverse/app-specs/commit/${{ github.sha }}
             - `docs/spec/` は直接編集しないでください。変えるときは app-specs に PR を出します
 
-            仕様の変更を実装するときは、このブランチ（`spec-sync`）から作業ブランチを切り、実装と一緒にマージします。
+            この PR を届いたらすぐマージするか、実装が追いつくまで開けておくかは、リポジトリごとに決めています（app-specs の README の「spec-sync の PR の扱い」）。
+            実装と一緒に入れるときは、既定のブランチから作業ブランチを切って、このブランチ（`spec-sync`）を取り込みます（merge）。
             このブランチは app-specs が更新されるたびに作り直されるので、ここに直接コミットしないでください。
