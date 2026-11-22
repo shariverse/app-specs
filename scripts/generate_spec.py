@@ -86,8 +86,10 @@ class Document:
 
     @property
     def title(self) -> str:
-        for line in self.body.splitlines():
-            if line.startswith("# "):
+        lines = self.body.splitlines()
+        for line, in_code in zip(lines, code_block_lines(f"{self.app}/{self.path}", lines)):
+            # コードブロックの中の「# コメント」は見出しではない
+            if line.startswith("# ") and not in_code:
                 return line[2:].strip()
         raise SpecError(f"{self.app}/{self.path}: 先頭の見出し（# ）がありません")
 

@@ -303,6 +303,10 @@ class RenderTests(FixtureTestCase):
         with self.assertRaisesRegex(spec.SpecError, "^sample-app/features/01-home.md: 先頭の見出し（# ）がありません"):
             spec.readme_with_index(self.app)
 
+    def test_title_is_not_taken_from_code_block(self) -> None:
+        write(self.root, "sample-app/features/01-home.md", "```sh\n# コードの中のコメント\n```\n\n# ホーム\n")
+        self.assertIn("| [ホーム](features/01-home.md) | あり |", self.render("ios")["README.md"])
+
     def test_full_index(self) -> None:
         _, expected = spec.readme_with_index(self.app)
         self.assertIn("| 機能 | iOS | Android |", expected)
