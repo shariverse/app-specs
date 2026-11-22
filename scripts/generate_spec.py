@@ -42,21 +42,29 @@ DISTRIBUTED_SUFFIXES = (".json", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp
 # リポジトリの直下にあって、どのアプリの docs/spec/ にも配るファイル
 SHARED_FILES = ("shariverse.md",)
 
-BLOCK_START = re.compile(r"^\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
+# 正規表現は、長い空白や長い語が続く行でも、行の長さに比例する時間で終わる形にする
+# （空白にも合う文字の集まりを \s* で挟むと、照合の時間が空白の数の 3 乗になり、同期のジョブが止まる）
+ONLY_TARGETS = r"([a-z]+(?:\s*,\s*[a-z]+)*)"
+BLOCK_START = re.compile(r"^\s*<!--\s*only:\s*" + ONLY_TARGETS + r"\s*-->\s*$")
 BLOCK_END = re.compile(r"^\s*<!--\s*/only\s*-->\s*$")
-LINE_ONLY = re.compile(r"\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
+# 行の途中から探すので、先頭に \s* を置かない（印の前の空白は、見つけた後で削る）
+LINE_ONLY = re.compile(r"<!--\s*only:\s*" + ONLY_TARGETS + r"\s*-->\s*$")
 # 印として読めなかった only（大文字・コロン抜け・印の後ろの文字など）。残すと、その OS だけの文が両方の OS に出る
 ONLY_LEFTOVER = re.compile(r"<!--\s*/?\s*only\b", re.IGNORECASE)
-# [文字](リンク先) と [文字](リンク先 "タイトル")。タイトルは、そのまま残す
-LINK = re.compile(r"""(\]\()([^)\s]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\))""")
+# [文字](リンク先) と [文字](リンク先 "タイトル")。タイトルは、そのまま残す。
+# 1 つの正規表現（\]\([^)\s]+…）で探すと、閉じない「](」が空白なしで並ぶ行で、1 つごとに行末まで読み直して遅くなる。
+# 「](」・リンク先の終わり（「)」か空白）・タイトルを分けて、find_links が前から 1 回ずつ読む
+LINK_START = re.compile(r"\]\(")
+LINK_STOP = re.compile(r"[)\s]")
+LINK_TITLE = re.compile(r"""[ \t]+(?:"[^"\n]*"|'[^'\n]*')\)""")
 # 書き換えも確認もできない形のリンク: 参照式（[名前]: リンク先。脚注の [^1]: は除く）・<> で囲んだリンク先・HTML の a と img
 REFERENCE_LINK = re.compile(r"^ {0,3}\[(?!\^)[^\]\n]+\]:[ \t]*(\S+)", re.MULTILINE)
 ANGLE_LINK = re.compile(r"\]\(<")
 HTML_TAG = re.compile(r"<(?:a|img)\b", re.IGNORECASE)
 HTML_LINK_ATTRIBUTE = re.compile(r"""\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
-# コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、1 行の中のインラインコード
+# コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、インラインコードを囲む ` の並び
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
-INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+BACKTICKS = re.compile(r"`+")
 REPOSITORY = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 # アプリのキーは、そのままフォルダの名前になる（../ や絶対パスで、リポジトリの外を読ませない）
 APP_KEY = re.compile(r"[a-z0-9][a-z0-9-]*")
@@ -192,6 +200,36 @@ def code_block_lines(path: str, lines: list[str]) -> list[bool]:
     return inside
 
 
+def inline_code_spans(line: str) -> list[tuple[int, int]]:
+    """1 行の中のインラインコードの範囲。` の並びから、後ろにある同じ長さの最初の並びまで。"""
+    runs = [(match.start(), match.end()) for match in BACKTICKS.finditer(line)]
+    closing: list[int | None] = [None] * len(runs)
+    nearest: dict[int, int] = {}
+    for index in range(len(runs) - 1, -1, -1):
+        length = runs[index][1] - runs[index][0]
+        closing[index] = nearest.get(length)
+        nearest[length] = index
+    spans = []
+    index = 0
+    while index < len(runs):
+        end = closing[index]
+        if end is None:
+            index += 1
+        else:
+            spans.append((runs[index][0], runs[end][1]))
+            index = end + 1
+    return spans
+
+
+def without_inline_code(line: str) -> str:
+    position = 0
+    kept = []
+    for start, end in inline_code_spans(line):
+        kept.append(line[position:start])
+        position = end
+    return "".join(kept) + line[position:]
+
+
 def code_checker(path: str, text: str) -> Callable[[int], bool]:
     """文字の位置が、コードブロックかインラインコードの中かを答える関数を返す。"""
     spans = []
@@ -201,7 +239,7 @@ def code_checker(path: str, text: str) -> Callable[[int], bool]:
         if in_block:
             spans.append((position, position + len(line)))
         else:
-            spans.extend((position + match.start(), position + match.end()) for match in INLINE_CODE.finditer(line))
+            spans.extend((position + start, position + end) for start, end in inline_code_spans(line))
         position += len(line) + 1
     starts = [start for start, _ in spans]
 
@@ -247,8 +285,8 @@ def filter_platform(path: str, text: str, platform: str, platforms: list[str]) -
                 if block is not None:
                     raise SpecError(f"{path}:{number}: only の中に only は書けません（{block_line} 行目から）")
                 line_only_targets = targets(line_only.group(1), number)
-                line = line[: line_only.start()]
-            if ONLY_LEFTOVER.search(INLINE_CODE.sub("", line)):
+                line = line[: line_only.start()].rstrip()
+            if ONLY_LEFTOVER.search(without_inline_code(line)):
                 raise SpecError(
                     f"{path}:{number}: only の印の形が違います"
                     "（<!-- only: ios --> のように小文字で書く。行末の印の後ろには何も書かない。段落を囲むときは印だけの行にする）"
@@ -272,16 +310,10 @@ def is_relative(href: str) -> bool:
     return not re.match(r"^[a-z][a-z0-9+.-]*:", href) and not href.startswith("#")
 
 
-def links(path: str, text: str) -> list[re.Match[str]]:
-    """コードブロックとインラインコードの外にある [文字](リンク先)。"""
-    in_code = code_checker(path, text)
-    return [match for match in LINK.finditer(text) if not in_code(match.start())]
-
-
 class Finder:
     """文字列を前から順に探す。見つけた位置を覚えておき、同じ場所を何度も読まない（長い行でも遅くならない）。"""
 
-    def __init__(self, text: str, needle: str) -> None:
+    def __init__(self, text: str, needle: str | re.Pattern[str]) -> None:
         self.text = text
         self.needle = needle
         self.found = -1
@@ -289,9 +321,62 @@ class Finder:
     def after(self, position: int) -> int:
         """position 以降で最初に needle がある位置。無ければ文字列の長さ。position は、前に聞いた値以上で呼ぶ。"""
         if self.found < position:
-            index = self.text.find(self.needle, position)
+            if isinstance(self.needle, str):
+                index = self.text.find(self.needle, position)
+            else:
+                match = self.needle.search(self.text, position)
+                index = match.start() if match else -1
             self.found = len(self.text) if index == -1 else index
         return self.found
+
+
+@dataclass(frozen=True)
+class Link:
+    """[文字](リンク先) の「](」から「)」まで。re.Match と同じ呼び方（start・end・group）で読める。"""
+
+    text: str
+    first: int
+    stop: int
+    last: int
+
+    def start(self) -> int:
+        return self.first
+
+    def end(self) -> int:
+        return self.last
+
+    def group(self, index: int) -> str:
+        """0: 全体 / 1: 「](」 / 2: リンク先 / 3: リンク先の後ろ（「)」か、タイトルと「)」）"""
+        bounds = ((self.first, self.last), (self.first, self.first + 2), (self.first + 2, self.stop), (self.stop, self.last))
+        return self.text[slice(*bounds[index])]
+
+
+def find_links(text: str) -> list[Link]:
+    """[文字](リンク先) と [文字](リンク先 "タイトル") を、前から順に重ならないように探す。"""
+    found = []
+    stops = Finder(text, LINK_STOP)
+    end = 0
+    no_title = -1
+    for match in LINK_START.finditer(text):
+        stop = stops.after(match.end())
+        # 前のリンクの中・リンク先が空・閉じていない・同じ場所でタイトルが無いと分かっている、は読み飛ばす
+        if match.start() < end or stop in (match.end(), len(text), no_title):
+            continue
+        if text[stop] == ")":
+            end = stop + 1
+        elif title := LINK_TITLE.match(text, stop):
+            end = title.end()
+        else:
+            no_title = stop
+            continue
+        found.append(Link(text, match.start(), stop, end))
+    return found
+
+
+def links(path: str, text: str) -> list[Link]:
+    """コードブロックとインラインコードの外にある [文字](リンク先)。"""
+    in_code = code_checker(path, text)
+    return [link for link in find_links(text) if not in_code(link.start())]
 
 
 def unsupported_relative_links(path: str, text: str) -> list[tuple[str, str]]:
@@ -359,7 +444,7 @@ def rewrite_links(
     for kind, href in unsupported_relative_links(f"{app.key}/{source}", text):
         raise SpecError(f"{app.key}/{source}: {kind}は、相対パスでは書けません（[文字](リンク先) の形にする）: {href}")
 
-    def replace(match: re.Match[str]) -> str:
+    def replace(match: Link) -> str:
         href = match.group(2)
         if in_code(match.start()) or not is_relative(href):
             return match.group(0)
@@ -389,7 +474,12 @@ def rewrite_links(
         relative = posixpath.relpath(mapped, posixpath.dirname(target) or ".")
         return f"{match.group(1)}{relative}{'#' + anchor if anchor else ''}{match.group(3)}"
 
-    return LINK.sub(replace, text)
+    rewritten = []
+    position = 0
+    for link in find_links(text):
+        rewritten += [text[position : link.start()], replace(link)]
+        position = link.end()
+    return "".join(rewritten) + text[position:]
 
 
 def app_files(app: App) -> list[tuple[str, Path]]:

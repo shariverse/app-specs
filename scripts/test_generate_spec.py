@@ -3,6 +3,7 @@ import io
 import json
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -409,6 +410,19 @@ class FilterTests(unittest.TestCase):
     def test_multiple_platforms(self) -> None:
         self.assertIn("両方", self.filter("<!-- only: ios, android -->\n両方\n<!-- /only -->\n"))
 
+    def test_spaces_around_marks(self) -> None:
+        self.assertEqual(self.filter("  <!--only:ios,android-->  \n両方\n\t<!--/only-->\n"), "両方\n")
+        self.assertEqual(self.filter("<!--   only:   ios  ,  android   -->\n両方\n<!--   /only   -->\n", "android"), "両方\n")
+        self.assertEqual(self.filter("| 数 | 64 |  \t<!--only:ios-->  \n"), "| 数 | 64 |\n")
+        self.assertEqual(self.filter("本文\u3000<!-- only: ios -->\n"), "本文\n")
+        self.assertEqual(self.filter("本文 <!-- only: android , ios -->\n", "android"), "本文\n")
+
+    def test_empty_names_in_mark_fail(self) -> None:
+        for text in ("本文 <!-- only: ios, -->\n", "<!-- only: ios,, android -->\n両方\n<!-- /only -->\n", "本文 <!-- only: -->\n", "本文 <!-- only: ios android -->\n"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(spec.SpecError, "only の印の形が違います"):
+                    self.filter(text)
+
     def test_nested_block_fails(self) -> None:
         with self.assertRaisesRegex(spec.SpecError, "only の中に only"):
             self.filter("<!-- only: ios -->\n<!-- only: ios -->\n<!-- /only -->\n<!-- /only -->\n")
@@ -748,6 +762,86 @@ class SymlinkTests(FixtureTestCase):
         (self.root / "shariverse.md").unlink()
         (self.root / "shariverse.md").symlink_to(self.secret)
         self.assert_stops("shariverse.md: シンボリックリンクにはできません")
+
+
+class LongLineTests(unittest.TestCase):
+    """長い空白や長い語が続く行でも、行の長さに比例する時間で終わる（同期のジョブを止めない）。"""
+
+    # 直す前は、空白 2,000 個で 10 秒前後（空白の数の 3 乗）、「](a」20,000 個で 30 秒前後（2 乗）かかった
+    LIMIT = 2.0
+
+    def assert_fast(self, call) -> None:
+        start = time.perf_counter()
+        try:
+            call()
+        except spec.SpecError:
+            pass
+        self.assertLess(time.perf_counter() - start, self.LIMIT)
+
+    def test_only_marks_with_long_spaces(self) -> None:
+        spaces = " " * 50_000
+        for line in (
+            "<!-- only:" + spaces + "x",
+            "本文 <!-- only:" + spaces + "x",
+            "<!-- only: ios" + spaces + ", android" + spaces + "x",
+            "本文 <!-- only: ios -->" + spaces + "x",
+            "本文" + spaces + "x",
+            spaces + "<!-- /only" + spaces + "x",
+            "<!--" + spaces + "only" + spaces + "x",
+        ):
+            with self.subTest(line=line[:20]):
+                self.assert_fast(lambda: spec.filter_platform("a.md", line + "\n", "ios", ["ios", "android"]))
+
+    def test_links_without_spaces(self) -> None:
+        for text in ("](a" * 100_000, '](a "' * 100_000, "](<a " * 100_000, "<a " * 100_000, '<a href="' * 100_000, "[" * 300_000):
+            with self.subTest(text=text[:10]):
+                self.assert_fast(lambda: spec.links("a.md", text))
+                self.assert_fast(lambda: spec.unsupported_relative_links("a.md", text))
+
+    def test_backticks_of_many_lengths(self) -> None:
+        line = " ".join("`" * length for length in range(1, 1000))
+        self.assert_fast(lambda: spec.filter_platform("a.md", line + " <!-- only: ios -->\n", "ios", ["ios", "android"]))
+        self.assert_fast(lambda: spec.links("a.md", line))
+
+
+class FindLinksTests(unittest.TestCase):
+    def test_links(self) -> None:
+        cases = {
+            "[a](b.md)": [("](b.md)", "b.md", ")")],
+            "[a](b.md#c) と ![図](d.png)": [("](b.md#c)", "b.md#c", ")"), ("](d.png)", "d.png", ")")],
+            '[a](b.md "題") [c](d.md \'題\')': [('](b.md "題")', "b.md", ' "題")'), ("](d.md '題')", "d.md", " '題')")],
+            "[a](b c.md) [d](e.md)": [("](e.md)", "e.md", ")")],
+            "[a](b](c.md)": [("](b](c.md)", "b](c.md", ")")],
+            "[a]() [b](c.md": [],
+            '[a](b.md "閉じない) [c](d.md\n"題")': [],
+            "[a](b.md\t'題')x": [("](b.md\t'題')", "b.md", "\t'題')")],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                found = spec.find_links(text)
+                self.assertEqual([(link.group(0), link.group(2), link.group(3)) for link in found], expected)
+                for link in found:
+                    self.assertEqual(link.group(1), "](")
+                    self.assertEqual(text[link.start() : link.end()], link.group(0))
+
+
+class InlineCodeTests(unittest.TestCase):
+    def test_spans(self) -> None:
+        cases = {
+            "a `b` c": ["`b`"],
+            "``a ` b`` と `c`": ["``a ` b``", "`c`"],
+            "`閉じない": [],
+            "``a` b": [],
+            "` a `` b ` c ``": ["` a `` b `"],
+            "```a``` `b`": ["```a```", "`b`"],
+        }
+        for line, expected in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual([line[start:end] for start, end in spec.inline_code_spans(line)], expected)
+                rest = line
+                for code in expected:
+                    rest = rest.replace(code, "", 1)
+                self.assertEqual(spec.without_inline_code(line), rest)
 
 
 if __name__ == "__main__":
