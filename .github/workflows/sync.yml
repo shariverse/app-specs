@@ -50,13 +50,29 @@ jobs:
           token: ${{ steps.token.outputs.token }}
           path: target
 
+      # 生成したものには元のコミットが入るので、そのまま比べると、どのコミットでも差分になる。
+      # いまの docs/spec/ と同じコミットで生成し直して中身が同じなら、この OS には関係ない変更として触らない。
+      # 触らなければ、下の create-pull-request は差分なしとして、開いている spec-sync の PR があれば閉じる。
       - name: docs/spec/ を生成
-        run: >-
-          python3 app-specs/scripts/generate_spec.py generate
-          --app "${{ matrix.app }}"
-          --platform "${{ matrix.platform }}"
-          --out target/docs/spec
-          --source-commit "${{ github.sha }}"
+        env:
+          APP: ${{ matrix.app }}
+          PLATFORM: ${{ matrix.platform }}
+          SHA: ${{ github.sha }}
+        run: |
+          generate() {
+            python3 app-specs/scripts/generate_spec.py generate \
+              --app "$APP" --platform "$PLATFORM" --out "$1" --source-commit "$2"
+          }
+          current=target/docs/spec
+          if [ -f "$current/.source.json" ]; then
+            commit=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["commit"])' "$current/.source.json")
+            generate "$RUNNER_TEMP/unchanged" "$commit"
+            if diff -r "$RUNNER_TEMP/unchanged" "$current" > /dev/null; then
+              echo "$PLATFORM 版の仕様は変わっていないので、docs/spec/ を触りません"
+              exit 0
+            fi
+          fi
+          generate "$current" "$SHA"
 
       - uses: peter-evans/create-pull-request@v7
         with:
