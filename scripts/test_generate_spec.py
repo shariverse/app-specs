@@ -298,6 +298,11 @@ class RenderTests(FixtureTestCase):
         errors = spec.check_undistributed_links(self.app, spec.load_documents(self.app))
         self.assertEqual(errors, ["sample-app/proposals/idea.md: リンク先がありません: ../features/99-none.md"])
 
+    def test_feature_without_title_fails_with_app_name(self) -> None:
+        write(self.root, "sample-app/features/01-home.md", "   # 字下げした題は、見出しにならない\n\n本文。\n")
+        with self.assertRaisesRegex(spec.SpecError, "^sample-app/features/01-home.md: 先頭の見出し（# ）がありません"):
+            spec.readme_with_index(self.app)
+
     def test_full_index(self) -> None:
         _, expected = spec.readme_with_index(self.app)
         self.assertIn("| 機能 | iOS | Android |", expected)

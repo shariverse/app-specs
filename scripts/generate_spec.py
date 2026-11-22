@@ -79,6 +79,7 @@ class App:
 
 @dataclass(frozen=True)
 class Document:
+    app: str
     path: str
     status: dict[str, str]
     body: str
@@ -88,7 +89,7 @@ class Document:
         for line in self.body.splitlines():
             if line.startswith("# "):
                 return line[2:].strip()
-        raise SpecError(f"{self.path}: 先頭の見出し（# ）がありません")
+        raise SpecError(f"{self.app}/{self.path}: 先頭の見出し（# ）がありません")
 
 
 def load_apps() -> dict[str, App]:
@@ -372,7 +373,7 @@ def load_documents(app: App) -> dict[str, Document]:
         status, body = parse_front_matter(f"{app.key}/{path}", text, app.platforms)
         if path.startswith("platforms/") and text.startswith("---\n"):
             raise SpecError(f"{app.key}/{path}: platforms/ のファイルには status を書きません")
-        documents[path] = Document(path=path, status=status, body=body)
+        documents[path] = Document(app=app.key, path=path, status=status, body=body)
     if "README.md" not in documents:
         raise SpecError(f"{app.key}: README.md がありません")
     for platform in app.platforms:
