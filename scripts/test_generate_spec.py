@@ -270,6 +270,20 @@ class RenderTests(FixtureTestCase):
         self.assertIn("44pt", self.render("ios")["shariverse.md"])
         self.assertIn("[全体の方針](shariverse.md)", files["product.md"])
 
+    def test_shared_file_may_mention_platforms_the_app_does_not_have(self) -> None:
+        write(self.root, "apps.json", json.dumps({"solo-app": {"name": "iOS だけ", "repositories": {"ios": "shariverse/solo-app-ios"}}}))
+        write(self.root, "solo-app/README.md", "# iOS だけ\n\n<!-- features:start -->\n<!-- features:end -->\n")
+        write(self.root, "solo-app/platforms/ios.md", "# iOS 版\n")
+        write(self.root, "shariverse.md", "# 方針\n\n44pt 以上。 <!-- only: ios -->\n48dp 以上。 <!-- only: android -->\n")
+        shared = spec.render(spec.load_apps()["solo-app"], "ios", "abc1234")["shariverse.md"].decode("utf-8")
+        self.assertIn("44pt 以上。\n", shared)
+        self.assertNotIn("48dp", shared)
+
+    def test_shared_file_rejects_unknown_platform(self) -> None:
+        write(self.root, "shariverse.md", "# 方針\n\nWeb だけ。 <!-- only: web -->\n")
+        with self.assertRaisesRegex(spec.SpecError, "shariverse.md:3: only に知らない OS"):
+            self.render("ios")
+
     def test_shared_file_rejects_relative_links(self) -> None:
         write(self.root, "shariverse.md", "# 方針\n\n[アプリ](sample-app/README.md)\n")
         with self.assertRaisesRegex(spec.SpecError, "相対リンクは書けません"):

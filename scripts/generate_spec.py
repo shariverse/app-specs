@@ -454,7 +454,8 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
         file = ROOT / name
         if not file.exists():
             continue
-        body = filter_platform(name, file.read_text(encoding="utf-8"), platform, app.platforms)
+        # どのアプリにも配るファイルなので、このアプリに無い OS の only も書ける（その分は出さないだけ）
+        body = filter_platform(name, file.read_text(encoding="utf-8"), platform, list(PLATFORM_LABELS))
         relative = [match.group(2) for match in links(name, body) if is_relative(match.group(2))]
         relative += [href for _, href in unsupported_relative_links(name, body)]
         if relative:
