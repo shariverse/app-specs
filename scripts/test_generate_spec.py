@@ -295,6 +295,31 @@ class RenderTests(FixtureTestCase):
         files = self.render("ios")
         self.assertFalse([path for path in files if path.endswith((".csv", ".html"))])
 
+    def test_absolute_path_link_fails(self) -> None:
+        # ある機械にだけあるファイル（/etc/hosts など）を指すと、生成する場所で結果が変わる
+        for href in ("/etc/hosts", "/sample-app/rules.md", "/", "/etc/hosts#a"):
+            with self.subTest(href=href):
+                write(self.root, "sample-app/features/01-home.md", f"# ホーム\n\n[x]({href})\n")
+                with self.assertRaisesRegex(spec.SpecError, "^sample-app/features/01-home.md: リンクは相対パスで書きます（/ で始めない）: " + href):
+                    self.render("ios")
+
+    def test_link_outside_the_repository_fails(self) -> None:
+        for href in ("../../outside.md", "../../../etc/hosts", "../.."):
+            with self.subTest(href=href):
+                write(self.root, "sample-app/rules.md", f"# 規則\n\n[x]({href})\n")
+                with self.assertRaisesRegex(spec.SpecError, "^sample-app/rules.md: リポジトリの外へのリンクです: " + href):
+                    self.render("ios")
+
+    def test_absolute_and_outside_links_in_undistributed_files_fail(self) -> None:
+        write(self.root, "sample-app/notes/crop.md", "# 補足\n\n[a](/etc/hosts) [b](../../../outside.md) [c](../rules.md)\n")
+        self.assertEqual(
+            spec.check_undistributed_links(self.app, spec.load_documents(self.app)),
+            [
+                "sample-app/notes/crop.md: リンクは相対パスで書きます（/ で始めない）: /etc/hosts",
+                "sample-app/notes/crop.md: リポジトリの外へのリンクです: ../../../outside.md",
+            ],
+        )
+
     def test_roadmap_and_proposals_are_not_distributed(self) -> None:
         files = self.render("ios")
         self.assertNotIn("roadmap.md", files)

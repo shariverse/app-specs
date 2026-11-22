@@ -448,10 +448,15 @@ def rewrite_links(
         href = match.group(2)
         if in_code(match.start()) or not is_relative(href):
             return match.group(0)
+        # / で始まるパスとリポジトリの外は、生成する機械にあるファイルを見てしまい、動かす場所で結果が変わる
+        if href.startswith("/"):
+            raise SpecError(f"{app.key}/{source}: リンクは相対パスで書きます（/ で始めない）: {href}")
         link, _, anchor = href.partition("#")
         resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), link))
         if resolved.startswith("../") or resolved == "..":
             outside = posixpath.normpath(posixpath.join(app.key, resolved))
+            if outside.startswith("../") or outside == "..":
+                raise SpecError(f"{app.key}/{source}: リポジトリの外へのリンクです: {href}")
             if not (ROOT / outside).exists():
                 raise SpecError(f"{app.key}/{source}: リンク先がありません: {href}")
             if outside in SHARED_FILES:
@@ -723,7 +728,11 @@ def check_undistributed_links(app: App, documents: dict[str, Document]) -> list[
             if not is_relative(href):
                 continue
             resolved = posixpath.normpath(posixpath.join(app.key, posixpath.dirname(path), href.partition("#")[0]))
-            if not (ROOT / resolved).exists():
+            if href.startswith("/"):
+                errors.append(f"{app.key}/{path}: リンクは相対パスで書きます（/ で始めない）: {href}")
+            elif resolved.startswith("../") or resolved == "..":
+                errors.append(f"{app.key}/{path}: リポジトリの外へのリンクです: {href}")
+            elif not (ROOT / resolved).exists():
                 errors.append(f"{app.key}/{path}: リンク先がありません: {href}")
     return errors
 
