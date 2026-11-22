@@ -35,6 +35,8 @@ UNDISTRIBUTED_FILES = {"roadmap.md"}
 UNDISTRIBUTED_DIRECTORIES = ("proposals/", "notes/")
 # 配らないもののうち、仕様の補足として各 OS からも辿れるよう、リンクを GitHub の URL にして残すもの
 LINKED_BY_URL_DIRECTORIES = ("notes/",)
+# Markdown のほかに配るファイルの種類。スクリプト・設定・ワークフローの形をしたものが、各 OS のリポジトリに届かないようにする
+DISTRIBUTED_SUFFIXES = (".json", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
 # リポジトリの直下にあって、どのアプリの docs/spec/ にも配るファイル
 SHARED_FILES = ("shariverse.md",)
 
@@ -497,8 +499,14 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
             continue
         if path.startswith("platforms/"):
             raise SpecError(f"{app.key}/{path}: platforms/ には Markdown だけを置きます")
-        if output_path(path, platform, documents) is not None:
-            files[path] = file.read_bytes()
+        if output_path(path, platform, documents) is None:
+            continue
+        if file.suffix.lower() not in DISTRIBUTED_SUFFIXES:
+            raise SpecError(
+                f"{app.key}/{path}: 配れるのは Markdown（.md）と {' '.join(DISTRIBUTED_SUFFIXES)} だけです"
+                "（配らないものは notes/ か proposals/ に置く）"
+            )
+        files[path] = file.read_bytes()
 
     for name in SHARED_FILES:
         file = ROOT / name

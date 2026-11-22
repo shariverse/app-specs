@@ -273,6 +273,27 @@ class RenderTests(FixtureTestCase):
         with self.assertRaisesRegex(spec.SpecError, "docs/spec/ に出さないファイルへのリンク"):
             self.render("ios")
 
+    def test_only_listed_file_types_are_distributed(self) -> None:
+        for path in ("design/icon.PNG", "design/photo.jpeg", "features/flow.svg"):
+            write(self.root, "sample-app/" + path, "x\n")
+        files = self.render("ios")
+        for path in ("design/tokens.json", "design/icon.PNG", "design/photo.jpeg", "features/flow.svg"):
+            self.assertIn(path, files)
+
+    def test_other_file_types_fail(self) -> None:
+        for path in ("run.sh", "design/tokens.yml", "features/x.MD", "features/Makefile", "design/page.html", "design/a.json.txt"):
+            with self.subTest(path=path):
+                write(self.root, "sample-app/" + path, "x\n")
+                with self.assertRaisesRegex(spec.SpecError, f"^sample-app/{path}: 配れるのは Markdown（.md）と .json .png"):
+                    self.render("ios")
+                (self.root / "sample-app" / path).unlink()
+
+    def test_other_file_types_are_allowed_where_not_distributed(self) -> None:
+        write(self.root, "sample-app/notes/measure.csv", "a,b\n")
+        write(self.root, "sample-app/proposals/mock.html", "<html></html>\n")
+        files = self.render("ios")
+        self.assertFalse([path for path in files if path.endswith((".csv", ".html"))])
+
     def test_roadmap_and_proposals_are_not_distributed(self) -> None:
         files = self.render("ios")
         self.assertNotIn("roadmap.md", files)
