@@ -57,6 +57,9 @@ jobs:
           private-key: ${{ secrets.SPEC_SYNC_APP_PRIVATE_KEY }}
           owner: shariverse
           repositories: ${{ matrix.repository_name }}
+          # App に権限を足しても、ここで作るトークンは PR を出すのに要る分だけにする
+          permission-contents: write
+          permission-pull-requests: write
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
