@@ -113,6 +113,15 @@ status:
 - `notes/` へのリンクは、生成のときにこのリポジトリの GitHub の URL になる（各 OS からも補足を辿れる）
 - `shariverse.md` へのリンクは、各 OS の `docs/spec/shariverse.md` になる。`shariverse.md` の中には相対リンクを書かない
 - アプリのフォルダの外へのそれ以外のリンクは、このリポジトリの GitHub の URL になる
+- `/` で始まるパスと、このリポジトリの外を指すパスは書けない（生成する機械で結果が変わるため、生成が止まる）
+
+### 配るファイル
+
+- 配るのは、Markdown（`.md`）と `.json`・画像（`.png`・`.jpg`・`.jpeg`・`.gif`・`.svg`・`.webp`）だけ。ほかの種類を置くと、生成が止まる（配らない資料は `notes/` か `proposals/` に置く）
+- `roadmap.md`・`proposals/`・`notes/` は、大文字小文字と置いた階層に依らず配らない（`Proposals/`・`features/notes/` も配らない）
+- `CLAUDE.md`・`AGENTS.md` は配らない（各 OS の `docs/spec/` に届くと、そこを読む AI への指示として読まれるため）
+- `.` で始まる名前（`.DS_Store`・`.gitkeep` など）と `~` で終わる名前は、仕様として読まず、配らない
+- シンボリックリンクは置けない。出力の名前が重なるファイル（アプリの直下の `platform.md`・`shariverse.md`、大文字小文字だけが違う名前）も置けない
 
 ### 書かないもの
 
@@ -148,7 +157,9 @@ python3 -m unittest discover -s scripts
 ```
 
 Python 3.10 以上。標準ライブラリだけで動く。
-`generate` は、出力先が空か、前に生成した場所（`.source.json` がある）でなければ止まる（手で書いたファイルを消さないため）。
+`generate` は、出力先が空か、前にこのリポジトリから生成した場所（`.source.json` の `repository` が `shariverse/app-specs`）でなければ止まる（手で書いたファイルを消さないため）。
+出力先そのものや、出力先のあるリポジトリの中の途中のフォルダがシンボリックリンクのときも止まる。
+`--source-commit` を省くと HEAD のコミットが入る。コミットしていない変更があると警告が出る（そのまま各 OS に入れると、Spec check が落ちる）。
 
 ## 準備
 
@@ -167,6 +178,6 @@ Sync が各 OS のリポジトリに PR を出すのに使う。
 
 ## アプリを足す
 
-1. `apps.json` に足す（キーはリポジトリ名から OS の部分を除いたもの）
+1. `apps.json` に足す（キーはリポジトリ名から OS の部分を除いたもの。英小文字・数字・ハイフンで書く。配り先は `shariverse/` のアプリのリポジトリだけ）
 2. `<app>/README.md`（`<!-- features:start -->` と `<!-- features:end -->` を入れる）・`product.md`・`roadmap.md`・`platforms/ios.md`・`platforms/android.md` を作る
 3. `write-index` と `check` を通す
