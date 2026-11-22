@@ -308,8 +308,15 @@ def unsupported_relative_links(path: str, text: str) -> list[tuple[str, str]]:
     return [(kind, href) for position, kind, href in sorted(found) if not in_code(position) and is_relative(href)]
 
 
+def is_ignored(source: str) -> bool:
+    """仕様として読まないファイルか（「.」で始まる名前と、その下。「~」で終わる名前）。"""
+    return any(part.startswith(".") for part in source.split("/")) or source.endswith("~")
+
+
 def output_path(source: str, platform: str, documents: dict[str, Document]) -> str | None:
     """共通仕様のパスを、その OS の docs/spec/ の中のパスにする。出さないファイルは None。"""
+    if is_ignored(source):
+        return None
     if source in UNDISTRIBUTED_FILES or source.startswith(UNDISTRIBUTED_DIRECTORIES):
         return None
     if source.startswith("platforms/"):
@@ -371,6 +378,7 @@ def app_files(app: App) -> list[tuple[str, Path]]:
     """アプリのフォルダの中のファイルを、(アプリの中のパス, 場所) で、パスの順に返す。
 
     シンボリックリンクを辿ると、リポジトリの外のファイル（同期のランナーに残る認証情報など）を読んで配ってしまうので、見つけたら止める。
+    「.」で始まる名前（.DS_Store・.gitkeep・.claude/ など）と「~」で終わる名前（エディタの控え）は、仕様ではないので読まない。
     """
     root = app.directory
     if root.is_symlink():
@@ -379,6 +387,8 @@ def app_files(app: App) -> list[tuple[str, Path]]:
     found = []
     for file in sorted(root.rglob("*")):
         path = file.relative_to(root).as_posix()
+        if is_ignored(path):
+            continue
         if file.is_symlink():
             raise SpecError(f"{app.key}/{path}: シンボリックリンクは置けません（リンク先の中身を配ってしまうため）")
         if file.is_dir():

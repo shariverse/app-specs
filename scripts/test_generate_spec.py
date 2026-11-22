@@ -245,6 +245,34 @@ class RenderTests(FixtureTestCase):
         with self.assertRaisesRegex(spec.SpecError, "リンク先がありません"):
             self.render("ios")
 
+    def test_hidden_and_backup_files_are_not_distributed(self) -> None:
+        expected = {platform: self.render(platform) for platform in ("ios", "android")}
+        for path in (
+            ".DS_Store",
+            "features/.DS_Store",
+            "features/.gitkeep",
+            "features/01-home.md~",
+            "design/tokens.json~",
+            ".claude/settings.json",
+            ".claude/skills/x/SKILL.md",
+            ".github/workflows/x.yml",
+            ".gitattributes",
+            ".source.json",
+            "features/.draft.md",
+        ):
+            write(self.root, "sample-app/" + path, "x\n")
+        for platform in ("ios", "android"):
+            self.assertEqual(self.render(platform), expected[platform])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(spec.main(["write-index"]), 0)
+        self.assertEqual(spec.main(["check"]), 0)
+
+    def test_link_to_hidden_file_fails(self) -> None:
+        write(self.root, "sample-app/features/.draft.md", "# 下書き\n")
+        write(self.root, "sample-app/rules.md", "# 規則\n\n[下書き](features/.draft.md)\n")
+        with self.assertRaisesRegex(spec.SpecError, "docs/spec/ に出さないファイルへのリンク"):
+            self.render("ios")
+
     def test_roadmap_and_proposals_are_not_distributed(self) -> None:
         files = self.render("ios")
         self.assertNotIn("roadmap.md", files)
