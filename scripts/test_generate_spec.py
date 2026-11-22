@@ -1,8 +1,11 @@
 import contextlib
 import io
 import json
+import shutil
+import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -245,11 +248,149 @@ class RenderTests(FixtureTestCase):
         with self.assertRaisesRegex(spec.SpecError, "リンク先がありません"):
             self.render("ios")
 
+    def test_hidden_and_backup_files_are_not_distributed(self) -> None:
+        expected = {platform: self.render(platform) for platform in ("ios", "android")}
+        for path in (
+            ".DS_Store",
+            "features/.DS_Store",
+            "features/.gitkeep",
+            "features/01-home.md~",
+            "design/tokens.json~",
+            ".claude/settings.json",
+            ".claude/skills/x/SKILL.md",
+            ".github/workflows/x.yml",
+            ".gitattributes",
+            ".source.json",
+            "features/.draft.md",
+        ):
+            write(self.root, "sample-app/" + path, "x\n")
+        for platform in ("ios", "android"):
+            self.assertEqual(self.render(platform), expected[platform])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(spec.main(["write-index"]), 0)
+        self.assertEqual(spec.main(["check"]), 0)
+
+    def test_link_to_hidden_file_fails(self) -> None:
+        write(self.root, "sample-app/features/.draft.md", "# 下書き\n")
+        write(self.root, "sample-app/rules.md", "# 規則\n\n[下書き](features/.draft.md)\n")
+        with self.assertRaisesRegex(spec.SpecError, "docs/spec/ に出さないファイルへのリンク"):
+            self.render("ios")
+
+    def test_only_listed_file_types_are_distributed(self) -> None:
+        for path in ("design/icon.PNG", "design/photo.jpeg", "features/flow.svg"):
+            write(self.root, "sample-app/" + path, "x\n")
+        files = self.render("ios")
+        for path in ("design/tokens.json", "design/icon.PNG", "design/photo.jpeg", "features/flow.svg"):
+            self.assertIn(path, files)
+
+    def test_other_file_types_fail(self) -> None:
+        for path in ("run.sh", "design/tokens.yml", "features/x.MD", "features/Makefile", "design/page.html", "design/a.json.txt"):
+            with self.subTest(path=path):
+                write(self.root, "sample-app/" + path, "x\n")
+                with self.assertRaisesRegex(spec.SpecError, f"^sample-app/{path}: 配れるのは Markdown（.md）と .json .png"):
+                    self.render("ios")
+                (self.root / "sample-app" / path).unlink()
+
+    def test_other_file_types_are_allowed_where_not_distributed(self) -> None:
+        write(self.root, "sample-app/notes/measure.csv", "a,b\n")
+        write(self.root, "sample-app/proposals/mock.html", "<html></html>\n")
+        files = self.render("ios")
+        self.assertFalse([path for path in files if path.endswith((".csv", ".html"))])
+
+    def test_absolute_path_link_fails(self) -> None:
+        # ある機械にだけあるファイル（/etc/hosts など）を指すと、生成する場所で結果が変わる
+        for href in ("/etc/hosts", "/sample-app/rules.md", "/", "/etc/hosts#a"):
+            with self.subTest(href=href):
+                write(self.root, "sample-app/features/01-home.md", f"# ホーム\n\n[x]({href})\n")
+                with self.assertRaisesRegex(spec.SpecError, "^sample-app/features/01-home.md: リンクは相対パスで書きます（/ で始めない）: " + href):
+                    self.render("ios")
+
+    def test_link_outside_the_repository_fails(self) -> None:
+        for href in ("../../outside.md", "../../../etc/hosts", "../.."):
+            with self.subTest(href=href):
+                write(self.root, "sample-app/rules.md", f"# 規則\n\n[x]({href})\n")
+                with self.assertRaisesRegex(spec.SpecError, "^sample-app/rules.md: リポジトリの外へのリンクです: " + href):
+                    self.render("ios")
+
+    def test_absolute_and_outside_links_in_undistributed_files_fail(self) -> None:
+        write(self.root, "sample-app/notes/crop.md", "# 補足\n\n[a](/etc/hosts) [b](../../../outside.md) [c](../rules.md)\n")
+        self.assertEqual(
+            spec.check_undistributed_links(self.app, spec.load_documents(self.app)),
+            [
+                "sample-app/notes/crop.md: リンクは相対パスで書きます（/ で始めない）: /etc/hosts",
+                "sample-app/notes/crop.md: リポジトリの外へのリンクです: ../../../outside.md",
+            ],
+        )
+
+    def test_colliding_output_names_fail(self) -> None:
+        cases = {
+            "platform.md": "sample-app/platform.md と sample-app/platforms/ios.md が、どちらも iOS 版の platform.md になります",
+            "shariverse.md": "sample-app/shariverse.md と shariverse.md が、どちらも iOS 版の shariverse.md になります",
+        }
+        for path, message in cases.items():
+            with self.subTest(path=path):
+                write(self.root, "sample-app/" + path, "# 手で置いたファイル\n")
+                with self.assertRaisesRegex(spec.SpecError, message):
+                    self.render("ios")
+                (self.root / "sample-app" / path).unlink()
+
+    def test_output_names_differing_only_in_case_fail(self) -> None:
+        # 大文字小文字を区別しないファイルシステムでは 2 つを置けないので、名前を付け替えて確かめる
+        original = spec.output_path
+
+        def renamed(source: str, platform: str, documents: dict) -> "str | None":
+            return "RULES.md" if source == "product.md" else original(source, platform, documents)
+
+        spec.output_path = renamed
+        self.addCleanup(setattr, spec, "output_path", original)
+        with self.assertRaisesRegex(spec.SpecError, "sample-app/product.md と sample-app/rules.md が、どちらも iOS 版の rules.md になります"):
+            self.render("ios")
+
     def test_roadmap_and_proposals_are_not_distributed(self) -> None:
         files = self.render("ios")
         self.assertNotIn("roadmap.md", files)
         self.assertFalse([path for path in files if path.startswith("proposals/")])
         self.assertIn("product.md", files)
+
+    def test_undistributed_names_ignore_case_and_depth(self) -> None:
+        paths = ("ROADMAP.md", "Proposals/idea.md", "Notes/memo.md", "features/notes/memo.md", "features/roadmap.md", "design/PROPOSALS/a.png")
+        for path in paths:
+            write(self.root, "sample-app/" + path, "# 決まっていない案\n")
+        for platform in ("ios", "android"):
+            files = self.render(platform)
+            for path in paths:
+                self.assertNotIn(path, files)
+            self.assertNotIn("決まっていない案", files["README.md"])
+        _, index = spec.readme_with_index(self.app)
+        self.assertNotIn("決まっていない案", index)
+
+    def test_agent_instruction_files_are_not_distributed(self) -> None:
+        paths = ("CLAUDE.md", "AGENTS.md", "features/CLAUDE.md", "design/Agents.md")
+        for path in paths:
+            write(self.root, "sample-app/" + path, "# このフォルダを読む AI への指示\n")
+        for platform in ("ios", "android"):
+            files = self.render(platform)
+            for path in paths:
+                self.assertNotIn(path, files)
+            self.assertNotIn("AI への指示", files["README.md"])
+        write(self.root, "sample-app/rules.md", "# 規則\n\n[指示](CLAUDE.md)\n")
+        with self.assertRaisesRegex(spec.SpecError, "docs/spec/ に出さないファイルへのリンク"):
+            self.render("ios")
+
+    def test_is_undistributed(self) -> None:
+        # 大文字小文字を区別しないファイルシステムでも確かめられるよう、名前だけでも見る
+        for path in ("roadmap.md", "ROADMAP.md", "sub/Roadmap.md", "proposals/a.md", "Proposals/a.md", "notes/a.png", "features/NOTES/a.md", "notes"):
+            self.assertTrue(spec.is_undistributed(path), path)
+        for path in ("rules.md", "features/notes.md", "features/01-proposals.md", "design/roadmap.json", "my-notes/a.md"):
+            self.assertFalse(spec.is_undistributed(path), path)
+
+    def test_links_to_undistributed_names_fail(self) -> None:
+        write(self.root, "sample-app/Proposals/idea.md", "# 案\n")
+        for href in ("Proposals/idea.md", "notes", "proposals/"):
+            with self.subTest(href=href):
+                write(self.root, "sample-app/rules.md", f"# 規則\n\n[案]({href})\n")
+                with self.assertRaisesRegex(spec.SpecError, "docs/spec/ に出さないファイルへのリンク"):
+                    self.render("ios")
 
     def test_notes_are_linked_by_url(self) -> None:
         write(self.root, "sample-app/features/02-crop.md", "# 写真の調整\n\n[補足](../notes/crop.md#理由)\n")
@@ -319,6 +460,19 @@ class FilterTests(unittest.TestCase):
 
     def test_multiple_platforms(self) -> None:
         self.assertIn("両方", self.filter("<!-- only: ios, android -->\n両方\n<!-- /only -->\n"))
+
+    def test_spaces_around_marks(self) -> None:
+        self.assertEqual(self.filter("  <!--only:ios,android-->  \n両方\n\t<!--/only-->\n"), "両方\n")
+        self.assertEqual(self.filter("<!--   only:   ios  ,  android   -->\n両方\n<!--   /only   -->\n", "android"), "両方\n")
+        self.assertEqual(self.filter("| 数 | 64 |  \t<!--only:ios-->  \n"), "| 数 | 64 |\n")
+        self.assertEqual(self.filter("本文\u3000<!-- only: ios -->\n"), "本文\n")
+        self.assertEqual(self.filter("本文 <!-- only: android , ios -->\n", "android"), "本文\n")
+
+    def test_empty_names_in_mark_fail(self) -> None:
+        for text in ("本文 <!-- only: ios, -->\n", "<!-- only: ios,, android -->\n両方\n<!-- /only -->\n", "本文 <!-- only: -->\n", "本文 <!-- only: ios android -->\n"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(spec.SpecError, "only の印の形が違います"):
+                    self.filter(text)
 
     def test_nested_block_fails(self) -> None:
         with self.assertRaisesRegex(spec.SpecError, "only の中に only"):
@@ -420,13 +574,82 @@ class WriteOutputTests(unittest.TestCase):
                 spec.write_output(out, {spec.SOURCE_FILE: b"{}"})
             self.assertEqual(out.read_text(encoding="utf-8"), "ファイル")
 
+    SOURCE = json.dumps({"repository": "shariverse/app-specs", "commit": "abc1234", "app": "sample-app", "platform": "ios"}).encode()
+
     def test_replaces_generated_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory) / "spec"
-            spec.write_output(out, {spec.SOURCE_FILE: b"{}", "old.md": b"x"})
-            spec.write_output(out, {spec.SOURCE_FILE: b"{}", "new.md": b"y"})
+            spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE, "old.md": b"x"})
+            spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE, "new.md": b"y"})
             self.assertFalse((out / "old.md").exists())
             self.assertTrue((out / "new.md").exists())
+
+    def repository(self, directory: str) -> Path:
+        # macOS の一時フォルダは /var（/private/var へのリンク）の下にあるので、実体のパスにしてから使う
+        repository = Path(directory).resolve() / "app"
+        (repository / ".git").mkdir(parents=True)
+        (repository / ".github").mkdir()
+        return repository
+
+    def test_refuses_symlinked_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.repository(directory)
+            (repository / "docs").mkdir()
+            (repository / "docs/spec").symlink_to(repository / ".github", target_is_directory=True)
+            with self.assertRaisesRegex(spec.SpecError, "出力先の途中にシンボリックリンク"):
+                spec.write_output(repository / "docs/spec", {spec.SOURCE_FILE: self.SOURCE})
+            self.assertEqual(list((repository / ".github").iterdir()), [])
+
+    def test_refuses_symlinked_parent_in_the_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.repository(directory)
+            (repository / "docs").symlink_to(repository / ".github", target_is_directory=True)
+            for out in (repository / "docs/spec", repository / "docs/deep/spec"):
+                with self.subTest(out=out):
+                    with self.assertRaisesRegex(spec.SpecError, "出力先の途中にシンボリックリンク.*/docs$"):
+                        spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE})
+            self.assertEqual(list((repository / ".github").iterdir()), [])
+
+    def test_symlink_above_the_repository_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = self.repository(directory)
+            link = Path(directory).resolve() / "link"
+            link.symlink_to(repository, target_is_directory=True)
+            spec.write_output(link / "docs/spec", {spec.SOURCE_FILE: self.SOURCE})
+            self.assertTrue((repository / "docs/spec" / spec.SOURCE_FILE).exists())
+
+    def test_refuses_paths_outside_the_output_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "spec"
+            for path in ("../escape.md", "features/../../escape.md", "/tmp/escape.md"):
+                with self.subTest(path=path):
+                    with self.assertRaisesRegex(spec.SpecError, "出力先の外には書けません"):
+                        spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE, path: b"x"})
+            self.assertFalse(out.exists())
+            self.assertFalse((Path(directory) / "escape.md").exists())
+
+    def test_refuses_to_replace_directory_with_unrelated_source_file(self) -> None:
+        for content in (b"{}", b"", b"{broken", b"[]", b'"shariverse/app-specs"', json.dumps({"repository": "someone/else"}).encode()):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                out = Path(directory) / "spec"
+                out.mkdir()
+                (out / spec.SOURCE_FILE).write_bytes(content)
+                (out / "keep.txt").write_text("関係のないファイル", encoding="utf-8")
+                with self.assertRaisesRegex(spec.SpecError, "生成したものではない"):
+                    spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE})
+                self.assertEqual((out / "keep.txt").read_text(encoding="utf-8"), "関係のないファイル")
+
+    def test_refuses_to_replace_directory_with_symlinked_source_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            real = Path(directory) / "real.json"
+            real.write_bytes(self.SOURCE)
+            out = Path(directory) / "spec"
+            out.mkdir()
+            (out / spec.SOURCE_FILE).symlink_to(real)
+            (out / "keep.txt").write_text("関係のないファイル", encoding="utf-8")
+            with self.assertRaisesRegex(spec.SpecError, "生成したものではない"):
+                spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE})
+            self.assertTrue((out / "keep.txt").exists())
 
 
 class CodeTests(FixtureTestCase):
@@ -519,6 +742,21 @@ class AppsTests(FixtureTestCase):
                 with self.assertRaisesRegex(spec.SpecError, message):
                     spec.load_apps()
 
+    def test_app_key_must_be_a_plain_name(self) -> None:
+        outside = Path(self.directory.name).parent / "outside-app"
+        for key in ("../outside-app", str(outside), "sample-app/features", "Sample-App", "sample_app", ".github", "-app", "", "sample app"):
+            with self.subTest(key=key):
+                self.apps({key: {"name": "サンプル", "repositories": {"ios": "shariverse/sample-app-ios"}}})
+                with self.assertRaisesRegex(spec.SpecError, "apps.json: アプリのキーは"):
+                    spec.load_apps()
+
+    def test_repository_must_belong_to_the_organization(self) -> None:
+        for repository in ("other-org/other-repo", "Shariverse/sample-app-ios", "shariverse/..", "shariverse/.github"):
+            with self.subTest(repository=repository):
+                self.apps({"sample-app": {"name": "サンプル", "repositories": {"ios": repository}}})
+                with self.assertRaisesRegex(spec.SpecError, "ios の配り先は shariverse のアプリのリポジトリだけです"):
+                    spec.load_apps()
+
     def test_check_fails_on_malformed_apps(self) -> None:
         # 前は check が通り、main に入ってから Sync の targets が IndexError で落ちた
         self.apps({"sample-app": {"name": "サンプル", "repositories": {"ios": "sample-app-ios"}}})
@@ -528,6 +766,196 @@ class AppsTests(FixtureTestCase):
                 with contextlib.redirect_stderr(stderr):
                     self.assertEqual(spec.main([command]), 1)
                 self.assertIn("owner/name の形", stderr.getvalue())
+
+
+class SymlinkTests(FixtureTestCase):
+    """シンボリックリンクは辿らない（リポジトリの外のファイルを docs/spec/ に写さない）。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.outside = tempfile.TemporaryDirectory()
+        self.addCleanup(self.outside.cleanup)
+        self.secret = Path(self.outside.name) / "config"
+        self.secret.write_text("token = secret\n", encoding="utf-8")
+
+    def assert_stops(self, message: str) -> None:
+        for platform in ("ios", "android"):
+            with self.subTest(platform=platform):
+                with self.assertRaisesRegex(spec.SpecError, message):
+                    self.render(platform)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(spec.main(["check"]), 1)
+        self.assertRegex(stderr.getvalue(), message)
+
+    def test_symlinked_file_fails(self) -> None:
+        (self.root / "sample-app/design/config.json").symlink_to(self.secret)
+        self.assert_stops("sample-app/design/config.json: シンボリックリンクは置けません")
+
+    def test_symlinked_markdown_fails(self) -> None:
+        (self.root / "sample-app/features/09-leak.md").symlink_to(self.secret)
+        self.assert_stops("sample-app/features/09-leak.md: シンボリックリンクは置けません")
+
+    def test_symlinked_directory_fails(self) -> None:
+        (self.root / "sample-app/design/more").symlink_to(self.outside.name, target_is_directory=True)
+        self.assert_stops("sample-app/design/more: シンボリックリンクは置けません")
+
+    def test_symlink_inside_the_app_also_fails(self) -> None:
+        (self.root / "sample-app/design/copy.json").symlink_to(self.root / "sample-app/design/tokens.json")
+        self.assert_stops("sample-app/design/copy.json: シンボリックリンクは置けません")
+
+    def test_symlinked_app_directory_fails(self) -> None:
+        (self.root / "sample-app").rename(Path(self.outside.name) / "sample-app")
+        (self.root / "sample-app").symlink_to(Path(self.outside.name) / "sample-app", target_is_directory=True)
+        self.assert_stops("sample-app: アプリのフォルダをシンボリックリンクにはできません")
+
+    def test_symlinked_shared_file_fails(self) -> None:
+        (self.root / "shariverse.md").unlink()
+        (self.root / "shariverse.md").symlink_to(self.secret)
+        self.assert_stops("shariverse.md: シンボリックリンクにはできません")
+
+
+class LongLineTests(unittest.TestCase):
+    """長い空白や長い語が続く行でも、行の長さに比例する時間で終わる（同期のジョブを止めない）。"""
+
+    # 直す前は、空白 2,000 個で 10 秒前後（空白の数の 3 乗）、「](a」20,000 個で 30 秒前後（2 乗）かかった
+    LIMIT = 2.0
+
+    def assert_fast(self, call) -> None:
+        start = time.perf_counter()
+        try:
+            call()
+        except spec.SpecError:
+            pass
+        self.assertLess(time.perf_counter() - start, self.LIMIT)
+
+    def test_only_marks_with_long_spaces(self) -> None:
+        spaces = " " * 50_000
+        for line in (
+            "<!-- only:" + spaces + "x",
+            "本文 <!-- only:" + spaces + "x",
+            "<!-- only: ios" + spaces + ", android" + spaces + "x",
+            "本文 <!-- only: ios -->" + spaces + "x",
+            "本文" + spaces + "x",
+            spaces + "<!-- /only" + spaces + "x",
+            "<!--" + spaces + "only" + spaces + "x",
+        ):
+            with self.subTest(line=line[:20]):
+                self.assert_fast(lambda: spec.filter_platform("a.md", line + "\n", "ios", ["ios", "android"]))
+
+    def test_links_without_spaces(self) -> None:
+        for text in ("](a" * 100_000, '](a "' * 100_000, "](<a " * 100_000, "<a " * 100_000, '<a href="' * 100_000, "[" * 300_000):
+            with self.subTest(text=text[:10]):
+                self.assert_fast(lambda: spec.links("a.md", text))
+                self.assert_fast(lambda: spec.unsupported_relative_links("a.md", text))
+
+    def test_backticks_of_many_lengths(self) -> None:
+        line = " ".join("`" * length for length in range(1, 1000))
+        self.assert_fast(lambda: spec.filter_platform("a.md", line + " <!-- only: ios -->\n", "ios", ["ios", "android"]))
+        self.assert_fast(lambda: spec.links("a.md", line))
+
+
+class FindLinksTests(unittest.TestCase):
+    def test_links(self) -> None:
+        cases = {
+            "[a](b.md)": [("](b.md)", "b.md", ")")],
+            "[a](b.md#c) と ![図](d.png)": [("](b.md#c)", "b.md#c", ")"), ("](d.png)", "d.png", ")")],
+            '[a](b.md "題") [c](d.md \'題\')': [('](b.md "題")', "b.md", ' "題")'), ("](d.md '題')", "d.md", " '題')")],
+            "[a](b c.md) [d](e.md)": [("](e.md)", "e.md", ")")],
+            "[a](b](c.md)": [("](b](c.md)", "b](c.md", ")")],
+            "[a]() [b](c.md": [],
+            '[a](b.md "閉じない) [c](d.md\n"題")': [],
+            "[a](b.md\t'題')x": [("](b.md\t'題')", "b.md", "\t'題')")],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                found = spec.find_links(text)
+                self.assertEqual([(link.group(0), link.group(2), link.group(3)) for link in found], expected)
+                for link in found:
+                    self.assertEqual(link.group(1), "](")
+                    self.assertEqual(text[link.start() : link.end()], link.group(0))
+
+
+class InlineCodeTests(unittest.TestCase):
+    def test_spans(self) -> None:
+        cases = {
+            "a `b` c": ["`b`"],
+            "``a ` b`` と `c`": ["``a ` b``", "`c`"],
+            "`閉じない": [],
+            "``a` b": [],
+            "` a `` b ` c ``": ["` a `` b `"],
+            "```a``` `b`": ["```a```", "`b`"],
+        }
+        for line, expected in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual([line[start:end] for start, end in spec.inline_code_spans(line)], expected)
+                rest = line
+                for code in expected:
+                    rest = rest.replace(code, "", 1)
+                self.assertEqual(spec.without_inline_code(line), rest)
+
+
+class GenerateCommandTests(FixtureTestCase):
+    def generate(self, *arguments: str) -> "tuple[int, str, Path]":
+        out = self.root / "out" / "spec"
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = spec.main(["generate", "--app", "sample-app", "--platform", "ios", "--out", str(out), *arguments])
+        return code, stderr.getvalue(), out
+
+    def test_source_commit_is_written(self) -> None:
+        for commit in ("abc1234", "0123456789abcdef0123456789abcdef01234567"):
+            with self.subTest(commit=commit):
+                code, _, out = self.generate("--source-commit", commit)
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads((out / spec.SOURCE_FILE).read_text(encoding="utf-8"))["commit"], commit)
+
+    def test_source_commit_must_be_a_hash(self) -> None:
+        for commit in ("main", "abc123", "ABC1234", "abc1234/../..", "abc1234 -->", "0123456789abcdef0123456789abcdef012345678", "abc1234\n"):
+            with self.subTest(commit=commit):
+                code, stderr, out = self.generate("--source-commit", commit)
+                self.assertEqual(code, 1)
+                self.assertIn("--source-commit は、コミットのハッシュ", stderr)
+                self.assertFalse(out.exists())
+
+    def git(self, *arguments: str) -> None:
+        identity = ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"]
+        subprocess.run(["git", *identity, *arguments], cwd=self.root, check=True, capture_output=True)
+
+    @unittest.skipUnless(shutil.which("git"), "git が無い")
+    def test_warns_when_generating_from_uncommitted_changes(self) -> None:
+        self.git("-c", "init.defaultBranch=main", "init", "-q")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "init")
+        warning = "警告: コミットしていない変更から生成します"
+
+        code, stderr, out = self.generate()
+        self.assertEqual((code, stderr), (0, ""))
+        head = json.loads((out / spec.SOURCE_FILE).read_text(encoding="utf-8"))["commit"]
+        self.assertRegex(head, "^[0-9a-f]{40}$")
+
+        # 生成に関係のないファイル（出力先など）は数えない
+        code, stderr, _ = self.generate()
+        self.assertEqual((code, stderr), (0, ""))
+
+        for path, text in (("sample-app/rules.md", "# 規則\n\n- コミットしていない行。\n"), ("sample-app/features/04-new.md", "# まだ追跡していない機能\n"), ("shariverse.md", "# 方針\n")):
+            with self.subTest(path=path):
+                write(self.root, path, text)
+                code, stderr, _ = self.generate()
+                self.assertEqual(code, 0)
+                self.assertIn(warning, stderr)
+                self.assertIn(head[:7], stderr)
+                # コミットを指定したときは、その中身で生成したと呼ぶ側が請け負うので、警告しない
+                code, stderr, _ = self.generate("--source-commit", head)
+                self.assertEqual((code, stderr), (0, ""))
+                self.git("add", "-A", "--", "sample-app", "shariverse.md")
+                self.git("commit", "-q", "-m", "change")
+                head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
+
+    def test_does_not_warn_outside_a_repository(self) -> None:
+        code, stderr, out = self.generate()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertEqual(json.loads((out / spec.SOURCE_FILE).read_text(encoding="utf-8"))["commit"], "0000000")
 
 
 if __name__ == "__main__":

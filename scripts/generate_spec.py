@@ -31,29 +31,46 @@ STATUS_LABELS = {"shipped": "あり", "planned": "予定", "undecided": "未定"
 INCLUDED_STATUSES = {"shipped", "planned"}
 SOURCE_FILE = ".source.json"
 # 決まっていないもの・よく変わるものは、各 OS で実装の根拠として読まれないよう配らない
-UNDISTRIBUTED_FILES = {"roadmap.md"}
-UNDISTRIBUTED_DIRECTORIES = ("proposals/", "notes/")
+# 名前は小文字で書く。大文字小文字と置いた階層に依らずに比べる（Proposals/ や features/notes/ も配らない）
+# CLAUDE.md・AGENTS.md は、各 OS の docs/spec/ に届くと、そこを読む AI への指示として読まれうるので配らない
+UNDISTRIBUTED_FILES = {"roadmap.md", "claude.md", "agents.md"}
+UNDISTRIBUTED_DIRECTORIES = {"proposals", "notes"}
 # 配らないもののうち、仕様の補足として各 OS からも辿れるよう、リンクを GitHub の URL にして残すもの
 LINKED_BY_URL_DIRECTORIES = ("notes/",)
+# Markdown のほかに配るファイルの種類。スクリプト・設定・ワークフローの形をしたものが、各 OS のリポジトリに届かないようにする
+DISTRIBUTED_SUFFIXES = (".json", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
 # リポジトリの直下にあって、どのアプリの docs/spec/ にも配るファイル
 SHARED_FILES = ("shariverse.md",)
 
-BLOCK_START = re.compile(r"^\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
+# 正規表現は、長い空白や長い語が続く行でも、行の長さに比例する時間で終わる形にする
+# （空白にも合う文字の集まりを \s* で挟むと、照合の時間が空白の数の 3 乗になり、同期のジョブが止まる）
+ONLY_TARGETS = r"([a-z]+(?:\s*,\s*[a-z]+)*)"
+BLOCK_START = re.compile(r"^\s*<!--\s*only:\s*" + ONLY_TARGETS + r"\s*-->\s*$")
 BLOCK_END = re.compile(r"^\s*<!--\s*/only\s*-->\s*$")
-LINE_ONLY = re.compile(r"\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
+# 行の途中から探すので、先頭に \s* を置かない（印の前の空白は、見つけた後で削る）
+LINE_ONLY = re.compile(r"<!--\s*only:\s*" + ONLY_TARGETS + r"\s*-->\s*$")
 # 印として読めなかった only（大文字・コロン抜け・印の後ろの文字など）。残すと、その OS だけの文が両方の OS に出る
 ONLY_LEFTOVER = re.compile(r"<!--\s*/?\s*only\b", re.IGNORECASE)
-# [文字](リンク先) と [文字](リンク先 "タイトル")。タイトルは、そのまま残す
-LINK = re.compile(r"""(\]\()([^)\s]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\))""")
+# [文字](リンク先) と [文字](リンク先 "タイトル")。タイトルは、そのまま残す。
+# 1 つの正規表現（\]\([^)\s]+…）で探すと、閉じない「](」が空白なしで並ぶ行で、1 つごとに行末まで読み直して遅くなる。
+# 「](」・リンク先の終わり（「)」か空白）・タイトルを分けて、find_links が前から 1 回ずつ読む
+LINK_START = re.compile(r"\]\(")
+LINK_STOP = re.compile(r"[)\s]")
+LINK_TITLE = re.compile(r"""[ \t]+(?:"[^"\n]*"|'[^'\n]*')\)""")
 # 書き換えも確認もできない形のリンク: 参照式（[名前]: リンク先。脚注の [^1]: は除く）・<> で囲んだリンク先・HTML の a と img
 REFERENCE_LINK = re.compile(r"^ {0,3}\[(?!\^)[^\]\n]+\]:[ \t]*(\S+)", re.MULTILINE)
 ANGLE_LINK = re.compile(r"\]\(<")
 HTML_TAG = re.compile(r"<(?:a|img)\b", re.IGNORECASE)
 HTML_LINK_ATTRIBUTE = re.compile(r"""\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
-# コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、1 行の中のインラインコード
+# コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、インラインコードを囲む ` の並び
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
-INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+BACKTICKS = re.compile(r"`+")
 REPOSITORY = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
+# アプリのキーは、そのままフォルダの名前になる（../ や絶対パスで、リポジトリの外を読ませない）
+APP_KEY = re.compile(r"[a-z0-9][a-z0-9-]*")
+COMMIT = re.compile(r"[0-9a-f]{7,40}")
+# 同期のワークフローが PR を出す先は、この org のリポジトリだけ
+SOURCE_OWNER = SOURCE_REPOSITORY.split("/")[0]
 INDEX_START = "<!-- features:start -->"
 INDEX_END = "<!-- features:end -->"
 
@@ -104,6 +121,8 @@ def load_apps() -> dict[str, App]:
         raise SpecError("apps.json: いちばん外は、アプリのキーから設定への対応にします")
     apps = {}
     for key, value in data.items():
+        if not APP_KEY.fullmatch(key):
+            raise SpecError(f"apps.json: アプリのキーは、英小文字・数字・ハイフンで書きます（先頭は英小文字か数字）: {key!r}")
         if not isinstance(value, dict) or not isinstance(value.get("name"), str) or not value["name"].strip():
             raise SpecError(f"apps.json: {key} に name（アプリの名前）がありません")
         repositories = value.get("repositories")
@@ -115,6 +134,10 @@ def load_apps() -> dict[str, App]:
         for platform, repository in repositories.items():
             if not isinstance(repository, str) or not REPOSITORY.fullmatch(repository):
                 raise SpecError(f"apps.json: {key} の {platform} のリポジトリは owner/name の形で書きます: {repository!r}")
+            owner, name = repository.split("/")
+            # 「.」で始まる名前（org の設定を置く .github など）は、アプリのリポジトリではない
+            if owner != SOURCE_OWNER or name.startswith("."):
+                raise SpecError(f"apps.json: {key} の {platform} の配り先は {SOURCE_OWNER} のアプリのリポジトリだけです: {repository!r}")
         apps[key] = App(key=key, name=value["name"], repositories=repositories)
     return apps
 
@@ -178,6 +201,36 @@ def code_block_lines(path: str, lines: list[str]) -> list[bool]:
     return inside
 
 
+def inline_code_spans(line: str) -> list[tuple[int, int]]:
+    """1 行の中のインラインコードの範囲。` の並びから、後ろにある同じ長さの最初の並びまで。"""
+    runs = [(match.start(), match.end()) for match in BACKTICKS.finditer(line)]
+    closing: list[int | None] = [None] * len(runs)
+    nearest: dict[int, int] = {}
+    for index in range(len(runs) - 1, -1, -1):
+        length = runs[index][1] - runs[index][0]
+        closing[index] = nearest.get(length)
+        nearest[length] = index
+    spans = []
+    index = 0
+    while index < len(runs):
+        end = closing[index]
+        if end is None:
+            index += 1
+        else:
+            spans.append((runs[index][0], runs[end][1]))
+            index = end + 1
+    return spans
+
+
+def without_inline_code(line: str) -> str:
+    position = 0
+    kept = []
+    for start, end in inline_code_spans(line):
+        kept.append(line[position:start])
+        position = end
+    return "".join(kept) + line[position:]
+
+
 def code_checker(path: str, text: str) -> Callable[[int], bool]:
     """文字の位置が、コードブロックかインラインコードの中かを答える関数を返す。"""
     spans = []
@@ -187,7 +240,7 @@ def code_checker(path: str, text: str) -> Callable[[int], bool]:
         if in_block:
             spans.append((position, position + len(line)))
         else:
-            spans.extend((position + match.start(), position + match.end()) for match in INLINE_CODE.finditer(line))
+            spans.extend((position + start, position + end) for start, end in inline_code_spans(line))
         position += len(line) + 1
     starts = [start for start, _ in spans]
 
@@ -233,8 +286,8 @@ def filter_platform(path: str, text: str, platform: str, platforms: list[str]) -
                 if block is not None:
                     raise SpecError(f"{path}:{number}: only の中に only は書けません（{block_line} 行目から）")
                 line_only_targets = targets(line_only.group(1), number)
-                line = line[: line_only.start()]
-            if ONLY_LEFTOVER.search(INLINE_CODE.sub("", line)):
+                line = line[: line_only.start()].rstrip()
+            if ONLY_LEFTOVER.search(without_inline_code(line)):
                 raise SpecError(
                     f"{path}:{number}: only の印の形が違います"
                     "（<!-- only: ios --> のように小文字で書く。行末の印の後ろには何も書かない。段落を囲むときは印だけの行にする）"
@@ -258,16 +311,10 @@ def is_relative(href: str) -> bool:
     return not re.match(r"^[a-z][a-z0-9+.-]*:", href) and not href.startswith("#")
 
 
-def links(path: str, text: str) -> list[re.Match[str]]:
-    """コードブロックとインラインコードの外にある [文字](リンク先)。"""
-    in_code = code_checker(path, text)
-    return [match for match in LINK.finditer(text) if not in_code(match.start())]
-
-
 class Finder:
     """文字列を前から順に探す。見つけた位置を覚えておき、同じ場所を何度も読まない（長い行でも遅くならない）。"""
 
-    def __init__(self, text: str, needle: str) -> None:
+    def __init__(self, text: str, needle: str | re.Pattern[str]) -> None:
         self.text = text
         self.needle = needle
         self.found = -1
@@ -275,9 +322,62 @@ class Finder:
     def after(self, position: int) -> int:
         """position 以降で最初に needle がある位置。無ければ文字列の長さ。position は、前に聞いた値以上で呼ぶ。"""
         if self.found < position:
-            index = self.text.find(self.needle, position)
+            if isinstance(self.needle, str):
+                index = self.text.find(self.needle, position)
+            else:
+                match = self.needle.search(self.text, position)
+                index = match.start() if match else -1
             self.found = len(self.text) if index == -1 else index
         return self.found
+
+
+@dataclass(frozen=True)
+class Link:
+    """[文字](リンク先) の「](」から「)」まで。re.Match と同じ呼び方（start・end・group）で読める。"""
+
+    text: str
+    first: int
+    stop: int
+    last: int
+
+    def start(self) -> int:
+        return self.first
+
+    def end(self) -> int:
+        return self.last
+
+    def group(self, index: int) -> str:
+        """0: 全体 / 1: 「](」 / 2: リンク先 / 3: リンク先の後ろ（「)」か、タイトルと「)」）"""
+        bounds = ((self.first, self.last), (self.first, self.first + 2), (self.first + 2, self.stop), (self.stop, self.last))
+        return self.text[slice(*bounds[index])]
+
+
+def find_links(text: str) -> list[Link]:
+    """[文字](リンク先) と [文字](リンク先 "タイトル") を、前から順に重ならないように探す。"""
+    found = []
+    stops = Finder(text, LINK_STOP)
+    end = 0
+    no_title = -1
+    for match in LINK_START.finditer(text):
+        stop = stops.after(match.end())
+        # 前のリンクの中・リンク先が空・閉じていない・同じ場所でタイトルが無いと分かっている、は読み飛ばす
+        if match.start() < end or stop in (match.end(), len(text), no_title):
+            continue
+        if text[stop] == ")":
+            end = stop + 1
+        elif title := LINK_TITLE.match(text, stop):
+            end = title.end()
+        else:
+            no_title = stop
+            continue
+        found.append(Link(text, match.start(), stop, end))
+    return found
+
+
+def links(path: str, text: str) -> list[Link]:
+    """コードブロックとインラインコードの外にある [文字](リンク先)。"""
+    in_code = code_checker(path, text)
+    return [link for link in find_links(text) if not in_code(link.start())]
 
 
 def unsupported_relative_links(path: str, text: str) -> list[tuple[str, str]]:
@@ -308,9 +408,20 @@ def unsupported_relative_links(path: str, text: str) -> list[tuple[str, str]]:
     return [(kind, href) for position, kind, href in sorted(found) if not in_code(position) and is_relative(href)]
 
 
+def is_ignored(source: str) -> bool:
+    """仕様として読まないファイルか（「.」で始まる名前と、その下。「~」で終わる名前）。"""
+    return any(part.startswith(".") for part in source.split("/")) or source.endswith("~")
+
+
+def is_undistributed(source: str) -> bool:
+    """各 OS に配らないと決めた名前か。Linux では大文字小文字が違うと別の名前になるので、小文字にそろえて、どの階層でも比べる。"""
+    parts = source.lower().split("/")
+    return parts[-1] in UNDISTRIBUTED_FILES or any(part in UNDISTRIBUTED_DIRECTORIES for part in parts)
+
+
 def output_path(source: str, platform: str, documents: dict[str, Document]) -> str | None:
     """共通仕様のパスを、その OS の docs/spec/ の中のパスにする。出さないファイルは None。"""
-    if source in UNDISTRIBUTED_FILES or source.startswith(UNDISTRIBUTED_DIRECTORIES):
+    if is_ignored(source) or is_undistributed(source):
         return None
     if source.startswith("platforms/"):
         return "platform.md" if source == f"platforms/{platform}.md" else None
@@ -334,14 +445,19 @@ def rewrite_links(
     for kind, href in unsupported_relative_links(f"{app.key}/{source}", text):
         raise SpecError(f"{app.key}/{source}: {kind}は、相対パスでは書けません（[文字](リンク先) の形にする）: {href}")
 
-    def replace(match: re.Match[str]) -> str:
+    def replace(match: Link) -> str:
         href = match.group(2)
         if in_code(match.start()) or not is_relative(href):
             return match.group(0)
+        # / で始まるパスとリポジトリの外は、生成する機械にあるファイルを見てしまい、動かす場所で結果が変わる
+        if href.startswith("/"):
+            raise SpecError(f"{app.key}/{source}: リンクは相対パスで書きます（/ で始めない）: {href}")
         link, _, anchor = href.partition("#")
         resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), link))
         if resolved.startswith("../") or resolved == "..":
             outside = posixpath.normpath(posixpath.join(app.key, resolved))
+            if outside.startswith("../") or outside == "..":
+                raise SpecError(f"{app.key}/{source}: リポジトリの外へのリンクです: {href}")
             if not (ROOT / outside).exists():
                 raise SpecError(f"{app.key}/{source}: リンク先がありません: {href}")
             if outside in SHARED_FILES:
@@ -364,13 +480,44 @@ def rewrite_links(
         relative = posixpath.relpath(mapped, posixpath.dirname(target) or ".")
         return f"{match.group(1)}{relative}{'#' + anchor if anchor else ''}{match.group(3)}"
 
-    return LINK.sub(replace, text)
+    rewritten = []
+    position = 0
+    for link in find_links(text):
+        rewritten += [text[position : link.start()], replace(link)]
+        position = link.end()
+    return "".join(rewritten) + text[position:]
+
+
+def app_files(app: App) -> list[tuple[str, Path]]:
+    """アプリのフォルダの中のファイルを、(アプリの中のパス, 場所) で、パスの順に返す。
+
+    シンボリックリンクを辿ると、リポジトリの外のファイル（同期のランナーに残る認証情報など）を読んで配ってしまうので、見つけたら止める。
+    「.」で始まる名前（.DS_Store・.gitkeep・.claude/ など）と「~」で終わる名前（エディタの控え）は、仕様ではないので読まない。
+    """
+    root = app.directory
+    if root.is_symlink():
+        raise SpecError(f"{app.key}: アプリのフォルダをシンボリックリンクにはできません")
+    real_root = root.resolve()
+    found = []
+    for file in sorted(root.rglob("*")):
+        path = file.relative_to(root).as_posix()
+        if is_ignored(path):
+            continue
+        if file.is_symlink():
+            raise SpecError(f"{app.key}/{path}: シンボリックリンクは置けません（リンク先の中身を配ってしまうため）")
+        if file.is_dir():
+            continue
+        if not file.is_file() or real_root not in file.resolve().parents:
+            raise SpecError(f"{app.key}/{path}: アプリのフォルダの中の、ふつうのファイルではありません")
+        found.append((path, file))
+    return found
 
 
 def load_documents(app: App) -> dict[str, Document]:
     documents = {}
-    for file in sorted(app.directory.rglob("*.md")):
-        path = file.relative_to(app.directory).as_posix()
+    for path, file in app_files(app):
+        if file.suffix != ".md":
+            continue
         text = file.read_text(encoding="utf-8")
         status, body = parse_front_matter(f"{app.key}/{path}", text, app.platforms)
         if path.startswith("platforms/") and text.startswith("---\n"):
@@ -385,7 +532,9 @@ def load_documents(app: App) -> dict[str, Document]:
 
 
 def features(documents: dict[str, Document]) -> list[Document]:
-    return [document for path, document in documents.items() if path.startswith("features/")]
+    return [
+        document for path, document in documents.items() if path.startswith("features/") and not is_undistributed(path)
+    ]
 
 
 def full_index(app: App, documents: dict[str, Document]) -> str:
@@ -439,11 +588,22 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
         raise SpecError(f"{app.key} に {platform} 版はありません")
     documents = load_documents(app)
     files: dict[str, bytes] = {}
+    claimed: dict[str, str] = {}
+
+    def claim(target: str, source: str) -> None:
+        """同じ名前に 2 つのファイルを出そうとしたら止める（後のほうが、知らせずに前のほうを上書きするため）。
+
+        大文字小文字だけが違う名前も、macOS や Windows では同じファイルになるので、重なりとして扱う。
+        """
+        other = claimed.setdefault(target.lower(), source)
+        if other != source:
+            raise SpecError(f"{app.key}: {other} と {source} が、どちらも {PLATFORM_LABELS[platform]} 版の {target} になります。名前を変えてください")
 
     for path, document in documents.items():
         target = output_path(path, platform, documents)
         if target is None:
             continue
+        claim(target, f"{app.key}/{path}")
         body = document.body
         if path == "README.md":
             body = replace_index(f"{app.key}/README.md", body, platform_index(platform, documents))
@@ -459,19 +619,28 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
             body = f"{title}\n\n{planned_notice(platform)}\n{rest.lstrip(chr(10))}"
         files[target] = (header(f"{app.key}/{path}", commit) + body).encode("utf-8")
 
-    for file in sorted(app.directory.rglob("*")):
-        if file.is_dir() or file.suffix == ".md":
+    for path, file in app_files(app):
+        if file.suffix == ".md":
             continue
-        path = file.relative_to(app.directory).as_posix()
         if path.startswith("platforms/"):
             raise SpecError(f"{app.key}/{path}: platforms/ には Markdown だけを置きます")
-        if output_path(path, platform, documents) is not None:
-            files[path] = file.read_bytes()
+        if output_path(path, platform, documents) is None:
+            continue
+        if file.suffix.lower() not in DISTRIBUTED_SUFFIXES:
+            raise SpecError(
+                f"{app.key}/{path}: 配れるのは Markdown（.md）と {' '.join(DISTRIBUTED_SUFFIXES)} だけです"
+                "（配らないものは notes/ か proposals/ に置く）"
+            )
+        claim(path, f"{app.key}/{path}")
+        files[path] = file.read_bytes()
 
     for name in SHARED_FILES:
         file = ROOT / name
+        if file.is_symlink():
+            raise SpecError(f"{name}: シンボリックリンクにはできません（リンク先の中身を配ってしまうため）")
         if not file.exists():
             continue
+        claim(name, name)
         # どのアプリにも配るファイルなので、このアプリに無い OS の only も書ける（その分は出さないだけ）
         body = filter_platform(name, file.read_text(encoding="utf-8"), platform, list(PLATFORM_LABELS))
         relative = [match.group(2) for match in links(name, body) if is_relative(match.group(2))]
@@ -490,12 +659,49 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
     return files
 
 
+def is_generated(out: Path) -> bool:
+    """前にこのリポジトリから生成した場所か。.source.json という名前があるだけでは信じず、中身を読む。"""
+    file = out / SOURCE_FILE
+    if file.is_symlink() or not file.is_file():
+        return False
+    try:
+        source = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(source, dict) and source.get("repository") == SOURCE_REPOSITORY
+
+
+def symlink_on_the_way(out: Path) -> Path | None:
+    """出力先そのものか、出力先のあるリポジトリの中の途中のフォルダが、シンボリックリンクならそれを返す。
+
+    docs が .github を指していると、docs/spec に出したつもりで .github/spec に書いてしまう。
+    リポジトリ（.git のあるフォルダ）より上は見ない（macOS の /tmp や /var のように、OS が置くリンクがあるため）。
+    """
+    if out.is_symlink():
+        return out
+    found = None
+    for parent in out.absolute().parents:
+        if (parent / ".git").exists():
+            return found
+        if parent.is_symlink():
+            found = parent
+    return None
+
+
 def write_output(out: Path, files: dict[str, bytes]) -> None:
+    if link := symlink_on_the_way(out):
+        raise SpecError(f"{out}: 出力先の途中にシンボリックリンクがあるので、書きません: {link}")
+    for path in files:
+        if path.startswith("/") or ".." in path.split("/"):
+            raise SpecError(f"{path}: 出力先の外には書けません")
     if out.exists() and not out.is_dir():
         raise SpecError(f"{out}: 出力先がフォルダではありません")
-    if out.exists() and any(out.iterdir()) and not (out / SOURCE_FILE).exists():
+    if out.exists() and any(out.iterdir()) and not is_generated(out):
         # 手で書いた docs/spec/ を消さないよう、生成したことのある場所だけを置き換える
-        raise SpecError(f"{out}: {SOURCE_FILE} が無いので、生成したものではないファイルを消してしまいます。中身を移してから空にしてください")
+        raise SpecError(
+            f"{out}: {SOURCE_REPOSITORY} から生成したものではないファイルを消してしまいます"
+            f"（{SOURCE_FILE} が無いか、中身が違う）。中身を移してから空にしてください"
+        )
     if out.exists():
         shutil.rmtree(out)
     for path, content in files.items():
@@ -511,6 +717,15 @@ def current_commit() -> str:
     return result.stdout.strip() if result.returncode == 0 else "0000000"
 
 
+def uncommitted_changes(app: App) -> bool:
+    """生成に使うファイル（アプリのフォルダ・apps.json・shariverse.md・scripts/）に、コミットしていない変更があるか。"""
+    paths = ["apps.json", *SHARED_FILES, "scripts", app.key]
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--", *paths], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
 def readme_with_index(app: App) -> tuple[str, str]:
     path = app.directory / "README.md"
     text = path.read_text(encoding="utf-8")
@@ -521,7 +736,16 @@ def command_generate(args: argparse.Namespace) -> None:
     apps = load_apps()
     if args.app not in apps:
         raise SpecError(f"apps.json に {args.app} がありません")
+    # コミットは、各 OS のリポジトリに出すファイルに入る。ハッシュの形でないものは入れない
+    if args.source_commit and not COMMIT.fullmatch(args.source_commit):
+        raise SpecError(f"--source-commit は、コミットのハッシュ（16 進の小文字で 7〜40 桁）で書きます: {args.source_commit!r}")
     commit = args.source_commit or current_commit()
+    if not args.source_commit and uncommitted_changes(apps[args.app]):
+        print(
+            f"警告: コミットしていない変更から生成します。{SOURCE_FILE} には HEAD（{commit[:7]}）が入るので、"
+            "このまま各 OS のリポジトリに入れると Spec check が落ちます（コミットしてから生成し直す）",
+            file=sys.stderr,
+        )
     write_output(Path(args.out), render(apps[args.app], args.platform, commit))
 
 
@@ -536,7 +760,11 @@ def check_undistributed_links(app: App, documents: dict[str, Document]) -> list[
             if not is_relative(href):
                 continue
             resolved = posixpath.normpath(posixpath.join(app.key, posixpath.dirname(path), href.partition("#")[0]))
-            if not (ROOT / resolved).exists():
+            if href.startswith("/"):
+                errors.append(f"{app.key}/{path}: リンクは相対パスで書きます（/ で始めない）: {href}")
+            elif resolved.startswith("../") or resolved == "..":
+                errors.append(f"{app.key}/{path}: リポジトリの外へのリンクです: {href}")
+            elif not (ROOT / resolved).exists():
                 errors.append(f"{app.key}/{path}: リンク先がありません: {href}")
     return errors
 
