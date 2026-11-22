@@ -12,14 +12,16 @@ on:
 permissions:
   contents: read
 
+# main 以外で手動実行しても（下の if で何もしない）、待っている main の実行を取り消さないよう、ブランチごとに分ける
 concurrency:
-  group: sync
+  group: sync-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   targets:
+    # 配るのは main の仕様だけ。手動実行でほかのブランチを選んでも、何もしない。
     # GitHub App を用意するまでは、失敗させずに飛ばす
-    if: vars.SPEC_SYNC_APP_ID != ''
+    if: github.ref == 'refs/heads/main' && vars.SPEC_SYNC_APP_ID != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -34,6 +36,9 @@ jobs:
   sync:
     needs: targets
     runs-on: ubuntu-latest
+    # 秘密鍵（SPEC_SYNC_APP_PRIVATE_KEY）はこの environment の secret に置き、Deployment branches を main だけにする。
+    # main のワークフローだけが鍵を使える
+    environment: spec-sync
     timeout-minutes: 15
     strategy:
       fail-fast: false
