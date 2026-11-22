@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import posixpath
 import re
@@ -18,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,6 +42,9 @@ BLOCK_START = re.compile(r"^\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
 BLOCK_END = re.compile(r"^\s*<!--\s*/only\s*-->\s*$")
 LINE_ONLY = re.compile(r"\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
 LINK = re.compile(r"(\]\()([^)\s]+)(\))")
+# コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、1 行の中のインラインコード
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
 INDEX_START = "<!-- features:start -->"
 INDEX_END = "<!-- features:end -->"
 
@@ -115,8 +120,58 @@ def parse_front_matter(path: str, text: str, platforms: list[str]) -> tuple[dict
     return status, body
 
 
+def code_block_lines(path: str, lines: list[str]) -> list[bool]:
+    """各行が、``` か ~~~ のコードブロックの中（始まりと終わりの行を含む）かを返す。
+
+    コードブロックの中は書いたとおりに出すので、only の印もリンクも読まない。
+    閉じ忘れると、そこから下の印がすべて読まれなくなるので、止める。
+    """
+    inside = []
+    fence = ""
+    fence_line = 0
+    for number, line in enumerate(lines, start=1):
+        match = FENCE.match(line)
+        if fence:
+            inside.append(True)
+            closes = match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence)
+            if closes and not match.group(2).strip():
+                fence = ""
+        elif match and not (match.group(1)[0] == "`" and "`" in match.group(2)):
+            fence = match.group(1)
+            fence_line = number
+            inside.append(True)
+        else:
+            inside.append(False)
+    if fence:
+        raise SpecError(f"{path}:{fence_line}: コードブロック（{fence}）が閉じていません")
+    return inside
+
+
+def code_checker(path: str, text: str) -> Callable[[int], bool]:
+    """文字の位置が、コードブロックかインラインコードの中かを答える関数を返す。"""
+    spans = []
+    position = 0
+    lines = text.split("\n")
+    for line, in_block in zip(lines, code_block_lines(path, lines)):
+        if in_block:
+            spans.append((position, position + len(line)))
+        else:
+            spans.extend((position + match.start(), position + match.end()) for match in INLINE_CODE.finditer(line))
+        position += len(line) + 1
+    starts = [start for start, _ in spans]
+
+    def in_code(position: int) -> bool:
+        index = bisect.bisect_right(starts, position) - 1
+        return index >= 0 and position < spans[index][1]
+
+    return in_code
+
+
 def filter_platform(path: str, text: str, platform: str, platforms: list[str]) -> str:
-    """`<!-- only: ios -->` の段落と、行末に同じ印を付けた行を、対象の OS のときだけ残す。"""
+    """`<!-- only: ios -->` の段落と、行末に同じ印を付けた行を、対象の OS のときだけ残す。
+
+    コードブロックの中は、印を読まず、空行も詰めない。
+    """
     def targets(raw: str, line_number: int) -> set[str]:
         names = {name.strip() for name in raw.split(",") if name.strip()}
         unknown = names - set(platforms)
@@ -124,33 +179,49 @@ def filter_platform(path: str, text: str, platform: str, platforms: list[str]) -
             raise SpecError(f"{path}:{line_number}: only に知らない OS があります: {raw!r}")
         return names
 
-    output = []
+    lines = text.splitlines()
+    output: list[str] = []
     block: set[str] | None = None
     block_line = 0
-    for number, line in enumerate(text.splitlines(), start=1):
-        if match := BLOCK_START.match(line):
-            if block is not None:
-                raise SpecError(f"{path}:{number}: only の中に only は書けません（{block_line} 行目から）")
-            block = targets(match.group(1), number)
-            block_line = number
-            continue
-        if BLOCK_END.match(line):
-            if block is None:
-                raise SpecError(f"{path}:{number}: 対応する <!-- only: … --> がありません")
-            block = None
-            continue
+    for number, (line, in_code) in enumerate(zip(lines, code_block_lines(path, lines)), start=1):
+        if not in_code:
+            if match := BLOCK_START.match(line):
+                if block is not None:
+                    raise SpecError(f"{path}:{number}: only の中に only は書けません（{block_line} 行目から）")
+                block = targets(match.group(1), number)
+                block_line = number
+                continue
+            if BLOCK_END.match(line):
+                if block is None:
+                    raise SpecError(f"{path}:{number}: 対応する <!-- only: … --> がありません")
+                block = None
+                continue
         if block is not None and platform not in block:
             continue
-        if match := LINE_ONLY.search(line):
-            if platform not in targets(match.group(1), number):
+        if not in_code:
+            if match := LINE_ONLY.search(line):
+                if platform not in targets(match.group(1), number):
+                    continue
+                line = line[: match.start()]
+            # 段落を除いた跡などで空行が続いたら、1 つにする（コードブロックの終わりの行は空行ではないので、中の空行とは混ざらない）
+            if not line and output and not output[-1]:
                 continue
-            line = line[: match.start()]
         output.append(line)
     if block is not None:
         raise SpecError(f"{path}:{block_line}: <!-- only: … --> が閉じていません")
 
-    result = "\n".join(output)
-    return re.sub(r"\n{3,}", "\n\n", result).strip("\n") + "\n"
+    return "\n".join(output).strip("\n") + "\n"
+
+
+def is_relative(href: str) -> bool:
+    """このリポジトリの中のファイルを指すリンクか（URL と、同じファイルの中のアンカーは違う）。"""
+    return not re.match(r"^[a-z][a-z0-9+.-]*:", href) and not href.startswith("#")
+
+
+def links(path: str, text: str) -> list[re.Match[str]]:
+    """コードブロックとインラインコードの外にある [文字](リンク先)。"""
+    in_code = code_checker(path, text)
+    return [match for match in LINK.finditer(text) if not in_code(match.start())]
 
 
 def output_path(source: str, platform: str, documents: dict[str, Document]) -> str | None:
@@ -175,10 +246,11 @@ def rewrite_links(
 ) -> str:
     target = output_path(source, platform, documents)
     assert target is not None
+    in_code = code_checker(f"{app.key}/{source}", text)
 
     def replace(match: re.Match[str]) -> str:
         href = match.group(2)
-        if re.match(r"^[a-z][a-z0-9+.-]*:", href) or href.startswith("#"):
+        if in_code(match.start()) or not is_relative(href):
             return match.group(0)
         link, _, anchor = href.partition("#")
         resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), link))
@@ -315,8 +387,8 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
         if not file.exists():
             continue
         body = filter_platform(name, file.read_text(encoding="utf-8"), platform, app.platforms)
-        for match in LINK.finditer(body):
-            if not re.match(r"^[a-z][a-z0-9+.-]*:", match.group(2)) and not match.group(2).startswith("#"):
+        for match in links(name, body):
+            if is_relative(match.group(2)):
                 raise SpecError(f"{name}: 各アプリに配るので、相対リンクは書けません（URL にする）: {match.group(2)}")
         files[name] = (header(name, commit) + body).encode("utf-8")
 
@@ -369,9 +441,9 @@ def check_undistributed_links(app: App, documents: dict[str, Document]) -> list[
     for path, document in documents.items():
         if output_path(path, app.platforms[0], documents) is not None or path.startswith("platforms/"):
             continue
-        for match in LINK.finditer(document.body):
+        for match in links(f"{app.key}/{path}", document.body):
             href = match.group(2)
-            if re.match(r"^[a-z][a-z0-9+.-]*:", href) or href.startswith("#"):
+            if not is_relative(href):
                 continue
             resolved = posixpath.normpath(posixpath.join(app.key, posixpath.dirname(path), href.partition("#")[0]))
             if not (ROOT / resolved).exists():

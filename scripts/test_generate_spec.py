@@ -300,5 +300,50 @@ class WriteOutputTests(unittest.TestCase):
             self.assertTrue((out / "new.md").exists())
 
 
+class CodeTests(FixtureTestCase):
+    """コードブロックとインラインコードの中は、書いたとおりに出す。"""
+
+    def filter(self, text: str, platform: str = "ios") -> str:
+        return spec.filter_platform("a.md", text, platform, ["ios", "android"])
+
+    def test_only_marks_in_code_block_are_kept(self) -> None:
+        text = "書き方:\n\n```markdown\n<!-- only: android -->\nAndroid だけ\n<!-- /only -->\n| 数 | 64 | <!-- only: ios -->\n```\n"
+        self.assertEqual(self.filter(text, "ios"), text)
+        self.assertEqual(self.filter(text, "android"), text)
+
+    def test_blank_lines_in_code_block_are_kept(self) -> None:
+        self.assertEqual(self.filter("前\n\n\n\n~~~\na\n\n\n\nb\n~~~\n\n\n後\n"), "前\n\n~~~\na\n\n\n\nb\n~~~\n\n後\n")
+
+    def test_code_block_in_only_block_follows_the_block(self) -> None:
+        text = "<!-- only: android -->\n```kotlin\nval a = 1\n```\n<!-- /only -->\n共通\n"
+        self.assertEqual(self.filter(text, "ios"), "共通\n")
+        self.assertEqual(self.filter(text, "android"), "```kotlin\nval a = 1\n```\n共通\n")
+
+    def test_code_block_closes_only_with_the_same_mark(self) -> None:
+        text = "````\n```\n<!-- only: android -->\n```\n````\n本文 <!-- only: android -->\n"
+        self.assertEqual(self.filter(text, "ios"), "````\n```\n<!-- only: android -->\n```\n````\n")
+
+    def test_unclosed_code_block_fails(self) -> None:
+        with self.assertRaisesRegex(spec.SpecError, "a.md:2: コードブロック（```）が閉じていません"):
+            self.filter("本文\n```swift\nlet a = 1\n")
+
+    def test_links_in_code_are_not_rewritten(self) -> None:
+        write(
+            self.root,
+            "sample-app/platforms/ios.md",
+            "# iOS 版\n\nリンクは `[文字](パス)` と書く。[ホーム](../features/01-home.md)\n\n"
+            "```swift\nlet x = handlers[index](value)\n[無い](none.md)\n```\n",
+        )
+        platform = self.render("ios")["platform.md"]
+        self.assertIn("リンクは `[文字](パス)` と書く。[ホーム](features/01-home.md)", platform)
+        self.assertIn("```swift\nlet x = handlers[index](value)\n[無い](none.md)\n```", platform)
+
+    def test_links_in_code_are_not_checked_in_shared_and_undistributed_files(self) -> None:
+        write(self.root, "shariverse.md", "# 方針\n\n`[文字](パス)` と書く。\n")
+        write(self.root, "sample-app/notes/crop.md", "# 補足\n\n```\n[無い](none.md)\n```\n")
+        self.assertIn("`[文字](パス)`", self.render("ios")["shariverse.md"])
+        self.assertEqual(spec.check_undistributed_links(self.app, spec.load_documents(self.app)), [])
+
+
 if __name__ == "__main__":
     unittest.main()
