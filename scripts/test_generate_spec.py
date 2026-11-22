@@ -893,5 +893,29 @@ class InlineCodeTests(unittest.TestCase):
                 self.assertEqual(spec.without_inline_code(line), rest)
 
 
+class GenerateCommandTests(FixtureTestCase):
+    def generate(self, *arguments: str) -> "tuple[int, str, Path]":
+        out = self.root / "out" / "spec"
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = spec.main(["generate", "--app", "sample-app", "--platform", "ios", "--out", str(out), *arguments])
+        return code, stderr.getvalue(), out
+
+    def test_source_commit_is_written(self) -> None:
+        for commit in ("abc1234", "0123456789abcdef0123456789abcdef01234567"):
+            with self.subTest(commit=commit):
+                code, _, out = self.generate("--source-commit", commit)
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads((out / spec.SOURCE_FILE).read_text(encoding="utf-8"))["commit"], commit)
+
+    def test_source_commit_must_be_a_hash(self) -> None:
+        for commit in ("main", "abc123", "ABC1234", "abc1234/../..", "abc1234 -->", "0123456789abcdef0123456789abcdef012345678", "abc1234\n"):
+            with self.subTest(commit=commit):
+                code, stderr, out = self.generate("--source-commit", commit)
+                self.assertEqual(code, 1)
+                self.assertIn("--source-commit は、コミットのハッシュ", stderr)
+                self.assertFalse(out.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

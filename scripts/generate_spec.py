@@ -68,6 +68,7 @@ BACKTICKS = re.compile(r"`+")
 REPOSITORY = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 # アプリのキーは、そのままフォルダの名前になる（../ や絶対パスで、リポジトリの外を読ませない）
 APP_KEY = re.compile(r"[a-z0-9][a-z0-9-]*")
+COMMIT = re.compile(r"[0-9a-f]{7,40}")
 # 同期のワークフローが PR を出す先は、この org のリポジトリだけ
 SOURCE_OWNER = SOURCE_REPOSITORY.split("/")[0]
 INDEX_START = "<!-- features:start -->"
@@ -726,6 +727,9 @@ def command_generate(args: argparse.Namespace) -> None:
     apps = load_apps()
     if args.app not in apps:
         raise SpecError(f"apps.json に {args.app} がありません")
+    # コミットは、各 OS のリポジトリに出すファイルに入る。ハッシュの形でないものは入れない
+    if args.source_commit and not COMMIT.fullmatch(args.source_commit):
+        raise SpecError(f"--source-commit は、コミットのハッシュ（16 進の小文字で 7〜40 桁）で書きます: {args.source_commit!r}")
     commit = args.source_commit or current_commit()
     write_output(Path(args.out), render(apps[args.app], args.platform, commit))
 
