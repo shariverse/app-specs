@@ -201,6 +201,8 @@ def filter_platform(path: str, text: str, platform: str, platforms: list[str]) -
                 continue
             # 印の形は、出力しない行でも確かめる（もう片方の OS の段落の中の書き損じも、どの OS の生成でも止める）
             if line_only := LINE_ONLY.search(line):
+                if block is not None:
+                    raise SpecError(f"{path}:{number}: only の中に only は書けません（{block_line} 行目から）")
                 line_only_targets = targets(line_only.group(1), number)
                 line = line[: line_only.start()]
             if ONLY_LEFTOVER.search(INLINE_CODE.sub("", line)):

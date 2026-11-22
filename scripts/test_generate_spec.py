@@ -253,6 +253,13 @@ class FilterTests(unittest.TestCase):
         with self.assertRaisesRegex(spec.SpecError, "only の中に only"):
             self.filter("<!-- only: ios -->\n<!-- only: ios -->\n<!-- /only -->\n<!-- /only -->\n")
 
+    def test_line_mark_in_block_fails(self) -> None:
+        text = "<!-- only: ios -->\n共通\n- a <!-- only: android -->\n<!-- /only -->\n"
+        for platform in ("ios", "android"):
+            with self.subTest(platform=platform):
+                with self.assertRaisesRegex(spec.SpecError, "^a.md:3: only の中に only は書けません（1 行目から）"):
+                    self.filter(text, platform)
+
     def test_unclosed_block_fails(self) -> None:
         with self.assertRaisesRegex(spec.SpecError, "閉じていません"):
             self.filter("<!-- only: ios -->\n本文\n")
@@ -273,7 +280,7 @@ class FilterTests(unittest.TestCase):
             "<!-- Only: android -->\nAndroid だけ\n",
             "<!-- only: ios -->\n本文\n<!-- /only -->\n<!-- / only -->\n",
             "本文 <!-- /only -->\n",
-            "<!-- only: android -->\n- Android だけ <!-- only: Android -->\n<!-- /only -->\n",
+            "<!-- only: android -->\n- Android だけ <!-- only Android -->\n<!-- /only -->\n",
         ):
             for platform in ("ios", "android"):
                 with self.subTest(text=text, platform=platform):
