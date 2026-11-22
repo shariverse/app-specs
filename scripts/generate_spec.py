@@ -41,6 +41,8 @@ SHARED_FILES = ("shariverse.md",)
 BLOCK_START = re.compile(r"^\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
 BLOCK_END = re.compile(r"^\s*<!--\s*/only\s*-->\s*$")
 LINE_ONLY = re.compile(r"\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
+# 印として読めなかった only（大文字・コロン抜け・印の後ろの文字など）。残すと、その OS だけの文が両方の OS に出る
+ONLY_LEFTOVER = re.compile(r"<!--\s*/?\s*only\b", re.IGNORECASE)
 LINK = re.compile(r"(\]\()([^)\s]+)(\))")
 # コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、1 行の中のインラインコード
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
@@ -184,6 +186,7 @@ def filter_platform(path: str, text: str, platform: str, platforms: list[str]) -
     block: set[str] | None = None
     block_line = 0
     for number, (line, in_code) in enumerate(zip(lines, code_block_lines(path, lines)), start=1):
+        line_only = None
         if not in_code:
             if match := BLOCK_START.match(line):
                 if block is not None:
@@ -196,16 +199,22 @@ def filter_platform(path: str, text: str, platform: str, platforms: list[str]) -
                     raise SpecError(f"{path}:{number}: 対応する <!-- only: … --> がありません")
                 block = None
                 continue
+            # 印の形は、出力しない行でも確かめる（もう片方の OS の段落の中の書き損じも、どの OS の生成でも止める）
+            if line_only := LINE_ONLY.search(line):
+                line_only_targets = targets(line_only.group(1), number)
+                line = line[: line_only.start()]
+            if ONLY_LEFTOVER.search(INLINE_CODE.sub("", line)):
+                raise SpecError(
+                    f"{path}:{number}: only の印の形が違います"
+                    "（<!-- only: ios --> のように小文字で書く。行末の印の後ろには何も書かない。段落を囲むときは印だけの行にする）"
+                )
         if block is not None and platform not in block:
             continue
-        if not in_code:
-            if match := LINE_ONLY.search(line):
-                if platform not in targets(match.group(1), number):
-                    continue
-                line = line[: match.start()]
-            # 段落を除いた跡などで空行が続いたら、1 つにする（コードブロックの終わりの行は空行ではないので、中の空行とは混ざらない）
-            if not line and output and not output[-1]:
-                continue
+        if line_only and platform not in line_only_targets:
+            continue
+        # 段落を除いた跡などで空行が続いたら、1 つにする（コードブロックの終わりの行は空行ではないので、中の空行とは混ざらない）
+        if not in_code and not line and output and not output[-1]:
+            continue
         output.append(line)
     if block is not None:
         raise SpecError(f"{path}:{block_line}: <!-- only: … --> が閉じていません")

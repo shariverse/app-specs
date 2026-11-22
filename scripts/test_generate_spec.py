@@ -264,6 +264,30 @@ class FilterTests(unittest.TestCase):
     def test_collapses_blank_lines(self) -> None:
         self.assertEqual(self.filter("前\n\n<!-- only: android -->\n消える\n<!-- /only -->\n\n後\n"), "前\n\n後\n")
 
+    def test_malformed_mark_fails(self) -> None:
+        for text in (
+            "| 数 | 64 件まで | <!-- only: iOS -->\n",
+            "- iOS だけ <!-- only ios -->\n",
+            "- iOS だけ <!-- only: ios -->。\n",
+            "a <!-- only: ios --> b\n",
+            "<!-- Only: android -->\nAndroid だけ\n",
+            "<!-- only: ios -->\n本文\n<!-- /only -->\n<!-- / only -->\n",
+            "本文 <!-- /only -->\n",
+            "<!-- only: android -->\n- Android だけ <!-- only: Android -->\n<!-- /only -->\n",
+        ):
+            for platform in ("ios", "android"):
+                with self.subTest(text=text, platform=platform):
+                    with self.assertRaisesRegex(spec.SpecError, "only の印の形が違います"):
+                        self.filter(text, platform)
+
+    def test_malformed_mark_reports_the_line(self) -> None:
+        with self.assertRaisesRegex(spec.SpecError, "^a.md:3: only の印の形が違います"):
+            self.filter("本文\n\n- iOS だけ <!-- only: iOS -->\n")
+
+    def test_mark_in_inline_code_is_not_a_mark(self) -> None:
+        text = "OS で分けるときは `<!-- only: iOS -->` のように書かず、`<!-- only: ios -->` と書く。\n"
+        self.assertEqual(self.filter(text), text)
+
 
 class FrontMatterTests(unittest.TestCase):
     def test_default_is_shipped(self) -> None:
