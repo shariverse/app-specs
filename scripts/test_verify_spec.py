@@ -89,6 +89,8 @@ class VerifyTestCase(unittest.TestCase):
         """app-specs の commit の中身から、docs/spec/ を生成する（Sync がすることと同じ）。label は .source.json に書くコミット。"""
         current = git(self.specs, "rev-parse", "--abbrev-ref", "HEAD")
         git(self.specs, "checkout", "--quiet", commit)
+        # 壊した .source.json の上には生成できない（generate は、前に生成した場所だけを置き換える）ので、消してから作る
+        shutil.rmtree(self.spec, ignore_errors=True)
         try:
             subprocess.run(
                 [sys.executable, str(self.specs / "scripts" / "generate_spec.py"), "generate", "--app", app,
