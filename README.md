@@ -185,8 +185,11 @@ Sync が各 OS のリポジトリに PR を出すのに使う。
 
 ### 各 OS のリポジトリ
 
-1. [`templates/spec-check.yml`](templates/spec-check.yml) を `.github/workflows/` に置く。`docs/spec/` が手で直されていたら PR の CI が落ちる
-2. `CLAUDE.md` に、仕様の正が `docs/spec/` であることと、`docs/spec/` を直接編集しないことを書く
+1. [`templates/spec-check.yml`](templates/spec-check.yml) を `.github/workflows/` に置く。すべての PR で動き、`docs/spec/` が main から生成したままでなければ落ちる
+   （手で直した・main に入っていないコミットから生成した・古い仕様に巻き戻した・ほかの OS やアプリの仕様を入れた）。
+   確かめる中身は [`scripts/verify_spec.py`](scripts/verify_spec.py) にあり、毎回 main のものが動く。テンプレートを写し直さなくても、確かめ方の直しは届く
+2. Spec check は、`docs/spec/` に触れない PR でも動いて成功する（`docs/spec/` がまだ無いリポジトリでも成功する）ので、ルールセットの必須チェックにできる（チェックの名前は `spec-check`）
+3. `CLAUDE.md` に、仕様の正が `docs/spec/` であることと、`docs/spec/` を直接編集しないことを書く
 
 ## アプリを足す
 
