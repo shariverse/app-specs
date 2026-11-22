@@ -58,6 +58,10 @@ HTML_LINK_ATTRIBUTE = re.compile(r"""\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
 REPOSITORY = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
+# アプリのキーは、そのままフォルダの名前になる（../ や絶対パスで、リポジトリの外を読ませない）
+APP_KEY = re.compile(r"[a-z0-9][a-z0-9-]*")
+# 同期のワークフローが PR を出す先は、この org のリポジトリだけ
+SOURCE_OWNER = SOURCE_REPOSITORY.split("/")[0]
 INDEX_START = "<!-- features:start -->"
 INDEX_END = "<!-- features:end -->"
 
@@ -108,6 +112,8 @@ def load_apps() -> dict[str, App]:
         raise SpecError("apps.json: いちばん外は、アプリのキーから設定への対応にします")
     apps = {}
     for key, value in data.items():
+        if not APP_KEY.fullmatch(key):
+            raise SpecError(f"apps.json: アプリのキーは、英小文字・数字・ハイフンで書きます（先頭は英小文字か数字）: {key!r}")
         if not isinstance(value, dict) or not isinstance(value.get("name"), str) or not value["name"].strip():
             raise SpecError(f"apps.json: {key} に name（アプリの名前）がありません")
         repositories = value.get("repositories")
@@ -119,6 +125,10 @@ def load_apps() -> dict[str, App]:
         for platform, repository in repositories.items():
             if not isinstance(repository, str) or not REPOSITORY.fullmatch(repository):
                 raise SpecError(f"apps.json: {key} の {platform} のリポジトリは owner/name の形で書きます: {repository!r}")
+            owner, name = repository.split("/")
+            # 「.」で始まる名前（org の設定を置く .github など）は、アプリのリポジトリではない
+            if owner != SOURCE_OWNER or name.startswith("."):
+                raise SpecError(f"apps.json: {key} の {platform} の配り先は {SOURCE_OWNER} のアプリのリポジトリだけです: {repository!r}")
         apps[key] = App(key=key, name=value["name"], repositories=repositories)
     return apps
 

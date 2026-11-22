@@ -608,6 +608,21 @@ class AppsTests(FixtureTestCase):
                 with self.assertRaisesRegex(spec.SpecError, message):
                     spec.load_apps()
 
+    def test_app_key_must_be_a_plain_name(self) -> None:
+        outside = Path(self.directory.name).parent / "outside-app"
+        for key in ("../outside-app", str(outside), "sample-app/features", "Sample-App", "sample_app", ".github", "-app", "", "sample app"):
+            with self.subTest(key=key):
+                self.apps({key: {"name": "サンプル", "repositories": {"ios": "shariverse/sample-app-ios"}}})
+                with self.assertRaisesRegex(spec.SpecError, "apps.json: アプリのキーは"):
+                    spec.load_apps()
+
+    def test_repository_must_belong_to_the_organization(self) -> None:
+        for repository in ("other-org/other-repo", "Shariverse/sample-app-ios", "shariverse/..", "shariverse/.github"):
+            with self.subTest(repository=repository):
+                self.apps({"sample-app": {"name": "サンプル", "repositories": {"ios": repository}}})
+                with self.assertRaisesRegex(spec.SpecError, "ios の配り先は shariverse のアプリのリポジトリだけです"):
+                    spec.load_apps()
+
     def test_check_fails_on_malformed_apps(self) -> None:
         # 前は check が通り、main に入ってから Sync の targets が IndexError で落ちた
         self.apps({"sample-app": {"name": "サンプル", "repositories": {"ios": "sample-app-ios"}}})
