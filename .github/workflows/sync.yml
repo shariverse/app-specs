@@ -68,6 +68,7 @@ jobs:
           APP: ${{ matrix.app }}
           PLATFORM: ${{ matrix.platform }}
           SHA: ${{ github.sha }}
+          REPOSITORY: ${{ matrix.repository }}
         run: |
           generate() {
             python3 app-specs/scripts/generate_spec.py generate \
@@ -99,7 +100,15 @@ jobs:
           fi
           label=$SHA
 
-          if git -C target fetch --quiet --depth=2 origin spec-sync 2>/dev/null; then
+          # spec-sync のブランチがあるか。「無い」（終了コード 2）と、通信・認証の失敗を分ける
+          code=0
+          git -C target ls-remote --exit-code origin refs/heads/spec-sync > /dev/null || code=$?
+          if [ "$code" -ne 0 ] && [ "$code" -ne 2 ]; then
+            echo "::error::$REPOSITORY に spec-sync のブランチがあるかを調べられませんでした（git ls-remote の終了コード $code）"
+            exit 1
+          fi
+          if [ "$code" -eq 0 ]; then
+            git -C target fetch --quiet --depth=2 origin spec-sync
             if git -C target cat-file -e FETCH_HEAD:docs/spec 2>/dev/null; then
               mkdir -p "$RUNNER_TEMP/spec-sync"
               git -C target archive FETCH_HEAD docs/spec | tar -x -C "$RUNNER_TEMP/spec-sync"
