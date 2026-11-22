@@ -153,7 +153,9 @@ Sync が各 OS のリポジトリに PR を出すのに使う。
 
 1. org の設定で GitHub App を作る。Repository permissions は Contents と Pull requests を Read and write（ほかは要らない。Webhook も切る）
 2. App を org に入れ、各 OS のアプリのリポジトリを対象にする
-3. このリポジトリの Actions の設定に、Variable `SPEC_SYNC_APP_ID`（App ID）と Secret `SPEC_SYNC_APP_PRIVATE_KEY`（秘密鍵）を入れる
+3. このリポジトリの Actions の設定に、Variable `SPEC_SYNC_APP_ID`（App ID）を入れる
+4. このリポジトリに environment `spec-sync` を作り、Deployment branches を `main` だけにして、その environment の secret に `SPEC_SYNC_APP_PRIVATE_KEY`（秘密鍵）を入れる。
+   Sync は main でだけ動き、main のワークフローだけが鍵を使える
 
 ### 各 OS のリポジトリ
 
