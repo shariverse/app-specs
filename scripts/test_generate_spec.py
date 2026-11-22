@@ -319,6 +319,12 @@ class FrontMatterTests(unittest.TestCase):
         with self.assertRaisesRegex(spec.SpecError, "すべて書きます"):
             spec.parse_front_matter("a.md", "---\nstatus:\n  ios: shipped\n---\n# 題\n", ["ios", "android"])
 
+    def test_duplicated_platform_fails(self) -> None:
+        with self.assertRaisesRegex(spec.SpecError, "a.md: status に ios が 2 回あります"):
+            spec.parse_front_matter(
+                "a.md", "---\nstatus:\n  ios: planned\n  ios: none\n  android: none\n---\n# 題\n", ["ios", "android"]
+            )
+
     def test_unknown_status_fails(self) -> None:
         with self.assertRaisesRegex(spec.SpecError, "書けません"):
             spec.parse_front_matter(

@@ -117,6 +117,8 @@ def parse_front_matter(path: str, text: str, platforms: list[str]) -> tuple[dict
         if not match:
             raise SpecError(f"{path}: status の行の形が違います: {line!r}")
         platform, value = match.groups()
+        if platform in status:
+            raise SpecError(f"{path}: status に {platform} が 2 回あります")
         if value not in STATUS_LABELS:
             raise SpecError(f"{path}: status に {value!r} は書けません（{', '.join(STATUS_LABELS)}）")
         status[platform] = value
