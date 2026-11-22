@@ -1,6 +1,8 @@
 import contextlib
 import io
 import json
+import shutil
+import subprocess
 import tempfile
 import textwrap
 import time
@@ -915,6 +917,45 @@ class GenerateCommandTests(FixtureTestCase):
                 self.assertEqual(code, 1)
                 self.assertIn("--source-commit は、コミットのハッシュ", stderr)
                 self.assertFalse(out.exists())
+
+    def git(self, *arguments: str) -> None:
+        identity = ["-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false"]
+        subprocess.run(["git", *identity, *arguments], cwd=self.root, check=True, capture_output=True)
+
+    @unittest.skipUnless(shutil.which("git"), "git が無い")
+    def test_warns_when_generating_from_uncommitted_changes(self) -> None:
+        self.git("-c", "init.defaultBranch=main", "init", "-q")
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "init")
+        warning = "警告: コミットしていない変更から生成します"
+
+        code, stderr, out = self.generate()
+        self.assertEqual((code, stderr), (0, ""))
+        head = json.loads((out / spec.SOURCE_FILE).read_text(encoding="utf-8"))["commit"]
+        self.assertRegex(head, "^[0-9a-f]{40}$")
+
+        # 生成に関係のないファイル（出力先など）は数えない
+        code, stderr, _ = self.generate()
+        self.assertEqual((code, stderr), (0, ""))
+
+        for path, text in (("sample-app/rules.md", "# 規則\n\n- コミットしていない行。\n"), ("sample-app/features/04-new.md", "# まだ追跡していない機能\n"), ("shariverse.md", "# 方針\n")):
+            with self.subTest(path=path):
+                write(self.root, path, text)
+                code, stderr, _ = self.generate()
+                self.assertEqual(code, 0)
+                self.assertIn(warning, stderr)
+                self.assertIn(head[:7], stderr)
+                # コミットを指定したときは、その中身で生成したと呼ぶ側が請け負うので、警告しない
+                code, stderr, _ = self.generate("--source-commit", head)
+                self.assertEqual((code, stderr), (0, ""))
+                self.git("add", "-A", "--", "sample-app", "shariverse.md")
+                self.git("commit", "-q", "-m", "change")
+                head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
+
+    def test_does_not_warn_outside_a_repository(self) -> None:
+        code, stderr, out = self.generate()
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertEqual(json.loads((out / spec.SOURCE_FILE).read_text(encoding="utf-8"))["commit"], "0000000")
 
 
 if __name__ == "__main__":

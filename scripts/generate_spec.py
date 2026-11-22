@@ -717,6 +717,15 @@ def current_commit() -> str:
     return result.stdout.strip() if result.returncode == 0 else "0000000"
 
 
+def uncommitted_changes(app: App) -> bool:
+    """生成に使うファイル（アプリのフォルダ・apps.json・shariverse.md・scripts/）に、コミットしていない変更があるか。"""
+    paths = ["apps.json", *SHARED_FILES, "scripts", app.key]
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--", *paths], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
 def readme_with_index(app: App) -> tuple[str, str]:
     path = app.directory / "README.md"
     text = path.read_text(encoding="utf-8")
@@ -731,6 +740,12 @@ def command_generate(args: argparse.Namespace) -> None:
     if args.source_commit and not COMMIT.fullmatch(args.source_commit):
         raise SpecError(f"--source-commit は、コミットのハッシュ（16 進の小文字で 7〜40 桁）で書きます: {args.source_commit!r}")
     commit = args.source_commit or current_commit()
+    if not args.source_commit and uncommitted_changes(apps[args.app]):
+        print(
+            f"警告: コミットしていない変更から生成します。{SOURCE_FILE} には HEAD（{commit[:7]}）が入るので、"
+            "このまま各 OS のリポジトリに入れると Spec check が落ちます（コミットしてから生成し直す）",
+            file=sys.stderr,
+        )
     write_output(Path(args.out), render(apps[args.app], args.platform, commit))
 
 
