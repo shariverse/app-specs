@@ -7,8 +7,10 @@
 
 | 機能 | iOS | Android |
 |---|---|---|
-| [推し活カウントダウン Plus](features/14-plus.md) | 1.3.0 で出す | 時期は未定 |
-| [シェア](features/13-share.md) | 1.3.0 で出す | 時期は未定 |
+| [推し活カウントダウン Plus](features/14-plus.md)（課金の仕組みと課金画面） | 実装済み。入口は開発版とテスト配信版だけに出している。1.3.0 で出す | 時期は未定 |
+| [推しの写真ウィジェット](features/16-photo-widget.md) | 実装済み。1.3.0 で出す | 時期は未定 |
+| [背景・飾りの着せ替え](features/17-dress-up.md) | 作っている | 時期は未定 |
+| [シェア](features/13-share.md) | 実装済み。1.3.0 で出す | 時期は未定 |
 
 ## Android 版で追いつくもの
 
@@ -21,7 +23,7 @@ iOS 版で先に出したもの。順番は決めていない。
 
 ## 検討中
 
-- Android 版に [地雷系・ゴシック](design/jirai-gothic.md) を入れるか
+- Android 版に [地雷系・ゴシック](design/jirai-gothic.md) を入れるか（1 位の推しの推し色で染めるテーマカラーを含む）
 - Android 版のホームの見出しを、iOS 版と同じくタイトルの文字を出さない形にするか（[ホーム](features/03-home.md)）
 
 新しい機能の提案は [`proposals/`](proposals/)。書き方は [ひな形](../templates/proposal.md)。
