@@ -105,7 +105,7 @@ status:
 - `platforms/ios.md` は、iOS 版では `platform.md` になる
 - その OS に出さないファイル（`undecided`・`none`・ほかの OS の `platforms/`）へのリンクは、生成が止まる。リンクを `only` で囲む
 - 配るファイルから `roadmap.md`・`proposals/` へはリンクしない（配った先でリンクが切れるため）
-- `notes/` へのリンクは、生成のときにこのリポジトリの GitHub の URL になる（各 OS からも補足を辿れる）
+- `notes/` へのリンクは、生成のときにこのリポジトリの GitHub の URL（main を指す）になる（各 OS からも補足を辿れる）
 - `shariverse.md` へのリンクは、各 OS の `docs/spec/shariverse.md` になる。`shariverse.md` の中には相対リンクを書かない
 - アプリのフォルダの外へのそれ以外のリンクは、このリポジトリの GitHub の URL になる
 

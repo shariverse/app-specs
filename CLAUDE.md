@@ -33,4 +33,5 @@ python3 -m unittest discover -s scripts
 
 - 標準ライブラリだけで書く（CI と各 OS のリポジトリの CI で、何も入れずに動かすため）
 - 出力は同じ入力から毎回同じになるようにする（各 OS のリポジトリの Spec check が、生成し直したものと比べるため）
+- 元の commit は `.source.json` にだけ書く。各ファイルの注記や URL に書くと、仕様を 1 行変えるたびに全ファイルが変わり、各 OS の作業ブランチどうしがコンフリクトする
 - 振る舞いを変えたら `scripts/test_generate_spec.py` にテストを足す
