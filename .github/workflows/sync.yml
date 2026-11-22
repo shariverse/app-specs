@@ -25,7 +25,7 @@ jobs:
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
       - id: list
@@ -40,20 +40,20 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.targets.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: app-specs
           persist-credentials: false
 
       - id: token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ vars.SPEC_SYNC_APP_ID }}
           private-key: ${{ secrets.SPEC_SYNC_APP_PRIVATE_KEY }}
           owner: shariverse
           repositories: ${{ matrix.repository_name }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ matrix.repository }}
           token: ${{ steps.token.outputs.token }}
@@ -100,7 +100,7 @@ jobs:
           generate "$current" "$SHA"
 
       - if: steps.generate.outputs.skip != 'true'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
         with:
           path: target
           token: ${{ steps.token.outputs.token }}
