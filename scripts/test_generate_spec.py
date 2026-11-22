@@ -509,13 +509,38 @@ class WriteOutputTests(unittest.TestCase):
                 spec.write_output(out, {spec.SOURCE_FILE: b"{}"})
             self.assertEqual(out.read_text(encoding="utf-8"), "ファイル")
 
+    SOURCE = json.dumps({"repository": "shariverse/app-specs", "commit": "abc1234", "app": "sample-app", "platform": "ios"}).encode()
+
     def test_replaces_generated_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory) / "spec"
-            spec.write_output(out, {spec.SOURCE_FILE: b"{}", "old.md": b"x"})
-            spec.write_output(out, {spec.SOURCE_FILE: b"{}", "new.md": b"y"})
+            spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE, "old.md": b"x"})
+            spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE, "new.md": b"y"})
             self.assertFalse((out / "old.md").exists())
             self.assertTrue((out / "new.md").exists())
+
+    def test_refuses_to_replace_directory_with_unrelated_source_file(self) -> None:
+        for content in (b"{}", b"", b"{broken", b"[]", b'"shariverse/app-specs"', json.dumps({"repository": "someone/else"}).encode()):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                out = Path(directory) / "spec"
+                out.mkdir()
+                (out / spec.SOURCE_FILE).write_bytes(content)
+                (out / "keep.txt").write_text("関係のないファイル", encoding="utf-8")
+                with self.assertRaisesRegex(spec.SpecError, "生成したものではない"):
+                    spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE})
+                self.assertEqual((out / "keep.txt").read_text(encoding="utf-8"), "関係のないファイル")
+
+    def test_refuses_to_replace_directory_with_symlinked_source_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            real = Path(directory) / "real.json"
+            real.write_bytes(self.SOURCE)
+            out = Path(directory) / "spec"
+            out.mkdir()
+            (out / spec.SOURCE_FILE).symlink_to(real)
+            (out / "keep.txt").write_text("関係のないファイル", encoding="utf-8")
+            with self.assertRaisesRegex(spec.SpecError, "生成したものではない"):
+                spec.write_output(out, {spec.SOURCE_FILE: self.SOURCE})
+            self.assertTrue((out / "keep.txt").exists())
 
 
 class CodeTests(FixtureTestCase):

@@ -550,12 +550,27 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
     return files
 
 
+def is_generated(out: Path) -> bool:
+    """前にこのリポジトリから生成した場所か。.source.json という名前があるだけでは信じず、中身を読む。"""
+    file = out / SOURCE_FILE
+    if file.is_symlink() or not file.is_file():
+        return False
+    try:
+        source = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(source, dict) and source.get("repository") == SOURCE_REPOSITORY
+
+
 def write_output(out: Path, files: dict[str, bytes]) -> None:
     if out.exists() and not out.is_dir():
         raise SpecError(f"{out}: 出力先がフォルダではありません")
-    if out.exists() and any(out.iterdir()) and not (out / SOURCE_FILE).exists():
+    if out.exists() and any(out.iterdir()) and not is_generated(out):
         # 手で書いた docs/spec/ を消さないよう、生成したことのある場所だけを置き換える
-        raise SpecError(f"{out}: {SOURCE_FILE} が無いので、生成したものではないファイルを消してしまいます。中身を移してから空にしてください")
+        raise SpecError(
+            f"{out}: {SOURCE_REPOSITORY} から生成したものではないファイルを消してしまいます"
+            f"（{SOURCE_FILE} が無いか、中身が違う）。中身を移してから空にしてください"
+        )
     if out.exists():
         shutil.rmtree(out)
     for path, content in files.items():
