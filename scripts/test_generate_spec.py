@@ -412,6 +412,14 @@ class WriteOutputTests(unittest.TestCase):
             with self.assertRaisesRegex(spec.SpecError, "生成したものではない"):
                 spec.write_output(out, {"README.md": b"x"})
 
+    def test_refuses_to_write_to_a_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "spec"
+            out.write_text("ファイル", encoding="utf-8")
+            with self.assertRaisesRegex(spec.SpecError, "出力先がフォルダではありません"):
+                spec.write_output(out, {spec.SOURCE_FILE: b"{}"})
+            self.assertEqual(out.read_text(encoding="utf-8"), "ファイル")
+
     def test_replaces_generated_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory) / "spec"

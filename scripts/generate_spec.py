@@ -491,6 +491,8 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
 
 
 def write_output(out: Path, files: dict[str, bytes]) -> None:
+    if out.exists() and not out.is_dir():
+        raise SpecError(f"{out}: 出力先がフォルダではありません")
     if out.exists() and any(out.iterdir()) and not (out / SOURCE_FILE).exists():
         # 手で書いた docs/spec/ を消さないよう、生成したことのある場所だけを置き換える
         raise SpecError(f"{out}: {SOURCE_FILE} が無いので、生成したものではないファイルを消してしまいます。中身を移してから空にしてください")
