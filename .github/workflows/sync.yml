@@ -51,9 +51,12 @@ jobs:
           path: target
 
       # 生成したものには元のコミットが入るので、そのまま比べると、どのコミットでも差分になる。
-      # いまの docs/spec/ と同じコミットで生成し直して中身が同じなら、この OS には関係ない変更として触らない。
-      # 触らなければ、下の create-pull-request は差分なしとして、開いている spec-sync の PR があれば閉じる。
+      # 比べる先の docs/spec/ と同じコミットで生成し直して、中身が同じかを見る。
+      # 1. 開いている spec-sync と同じなら、この OS には関係ない変更として、PR を作り直さない（下の手順を飛ばす）
+      # 2. 既定のブランチと同じなら、docs/spec/ を触らない。下の create-pull-request は差分なしとして、
+      #    開いている spec-sync の PR があれば閉じる（spec-sync で足した変更を取り消したときなど）
       - name: docs/spec/ を生成
+        id: generate
         env:
           APP: ${{ matrix.app }}
           PLATFORM: ${{ matrix.platform }}
@@ -63,18 +66,32 @@ jobs:
             python3 app-specs/scripts/generate_spec.py generate \
               --app "$APP" --platform "$PLATFORM" --out "$1" --source-commit "$2"
           }
-          current=target/docs/spec
-          if [ -f "$current/.source.json" ]; then
-            commit=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["commit"])' "$current/.source.json")
+          # $1 の docs/spec/ を、それと同じコミットで生成し直したものと比べる
+          unchanged_from() {
+            [ -f "$1/.source.json" ] || return 1
+            commit=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["commit"])' "$1/.source.json")
+            rm -rf "$RUNNER_TEMP/unchanged"
             generate "$RUNNER_TEMP/unchanged" "$commit"
-            if diff -r "$RUNNER_TEMP/unchanged" "$current" > /dev/null; then
-              echo "$PLATFORM 版の仕様は変わっていないので、docs/spec/ を触りません"
+            diff -r "$RUNNER_TEMP/unchanged" "$1" > /dev/null
+          }
+          if git -C target fetch --depth=1 origin spec-sync 2>/dev/null; then
+            mkdir -p "$RUNNER_TEMP/spec-sync"
+            if git -C target archive FETCH_HEAD docs/spec 2>/dev/null | tar -x -C "$RUNNER_TEMP/spec-sync" \
+              && unchanged_from "$RUNNER_TEMP/spec-sync/docs/spec"; then
+              echo "$PLATFORM 版の仕様は開いている spec-sync と変わらないので、PR を触りません"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
+          current=target/docs/spec
+          if unchanged_from "$current"; then
+            echo "$PLATFORM 版の仕様は変わっていないので、docs/spec/ を触りません"
+            exit 0
+          fi
           generate "$current" "$SHA"
 
-      - uses: peter-evans/create-pull-request@v7
+      - if: steps.generate.outputs.skip != 'true'
+        uses: peter-evans/create-pull-request@v7
         with:
           path: target
           token: ${{ steps.token.outputs.token }}
