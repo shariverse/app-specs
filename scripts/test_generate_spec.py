@@ -172,6 +172,21 @@ class RenderTests(FixtureTestCase):
             "[全体の README](https://github.com/shariverse/app-specs/blob/abc1234/README.md)", files["README.md"]
         )
 
+    def test_links_with_title_are_rewritten(self) -> None:
+        write(
+            self.root,
+            "sample-app/platforms/ios.md",
+            "# iOS 版\n\n[ホーム](../features/01-home.md \"ホームの仕様\") [補足](../notes/crop.md#理由 '補足')\n",
+        )
+        platform = self.render("ios")["platform.md"]
+        self.assertIn('[ホーム](features/01-home.md "ホームの仕様")', platform)
+        self.assertRegex(platform, r"\[補足\]\(https://github\.com/\S+/sample-app/notes/crop\.md#理由 '補足'\)")
+
+    def test_link_with_title_to_excluded_file_fails(self) -> None:
+        write(self.root, "sample-app/rules.md", '# 規則\n\n[テーマ](design/theme.md "テーマ")\n')
+        with self.assertRaisesRegex(spec.SpecError, "Android 版の docs/spec/ に出さないファイルへのリンク"):
+            self.render("android")
+
     def test_platform_index(self) -> None:
         readme = self.render("android")["README.md"]
         self.assertIn("| [ホーム](features/01-home.md) | あり |", readme)

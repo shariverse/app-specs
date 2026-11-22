@@ -43,7 +43,8 @@ BLOCK_END = re.compile(r"^\s*<!--\s*/only\s*-->\s*$")
 LINE_ONLY = re.compile(r"\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
 # 印として読めなかった only（大文字・コロン抜け・印の後ろの文字など）。残すと、その OS だけの文が両方の OS に出る
 ONLY_LEFTOVER = re.compile(r"<!--\s*/?\s*only\b", re.IGNORECASE)
-LINK = re.compile(r"(\]\()([^)\s]+)(\))")
+# [文字](リンク先) と [文字](リンク先 "タイトル")。タイトルは、そのまま残す
+LINK = re.compile(r"""(\]\()([^)\s]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\))""")
 # コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、1 行の中のインラインコード
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
