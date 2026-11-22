@@ -312,6 +312,19 @@ class RenderTests(FixtureTestCase):
         _, index = spec.readme_with_index(self.app)
         self.assertNotIn("決まっていない案", index)
 
+    def test_agent_instruction_files_are_not_distributed(self) -> None:
+        paths = ("CLAUDE.md", "AGENTS.md", "features/CLAUDE.md", "design/Agents.md")
+        for path in paths:
+            write(self.root, "sample-app/" + path, "# このフォルダを読む AI への指示\n")
+        for platform in ("ios", "android"):
+            files = self.render(platform)
+            for path in paths:
+                self.assertNotIn(path, files)
+            self.assertNotIn("AI への指示", files["README.md"])
+        write(self.root, "sample-app/rules.md", "# 規則\n\n[指示](CLAUDE.md)\n")
+        with self.assertRaisesRegex(spec.SpecError, "docs/spec/ に出さないファイルへのリンク"):
+            self.render("ios")
+
     def test_is_undistributed(self) -> None:
         # 大文字小文字を区別しないファイルシステムでも確かめられるよう、名前だけでも見る
         for path in ("roadmap.md", "ROADMAP.md", "sub/Roadmap.md", "proposals/a.md", "Proposals/a.md", "notes/a.png", "features/NOTES/a.md", "notes"):

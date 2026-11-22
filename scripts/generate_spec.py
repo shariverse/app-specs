@@ -32,7 +32,8 @@ INCLUDED_STATUSES = {"shipped", "planned"}
 SOURCE_FILE = ".source.json"
 # 決まっていないもの・よく変わるものは、各 OS で実装の根拠として読まれないよう配らない
 # 名前は小文字で書く。大文字小文字と置いた階層に依らずに比べる（Proposals/ や features/notes/ も配らない）
-UNDISTRIBUTED_FILES = {"roadmap.md"}
+# CLAUDE.md・AGENTS.md は、各 OS の docs/spec/ に届くと、そこを読む AI への指示として読まれうるので配らない
+UNDISTRIBUTED_FILES = {"roadmap.md", "claude.md", "agents.md"}
 UNDISTRIBUTED_DIRECTORIES = {"proposals", "notes"}
 # 配らないもののうち、仕様の補足として各 OS からも辿れるよう、リンクを GitHub の URL にして残すもの
 LINKED_BY_URL_DIRECTORIES = ("notes/",)
