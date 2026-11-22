@@ -302,6 +302,19 @@ class FrontMatterTests(unittest.TestCase):
         self.assertEqual(status, {"ios": "shipped", "android": "shipped"})
         self.assertEqual(body, "# 題\n")
 
+    def test_front_matter_not_at_the_top_fails(self) -> None:
+        front_matter = "---\nstatus:\n  ios: planned\n  android: none\n---\n# 題\n"
+        for text in ("\n" + front_matter, "\ufeff" + front_matter, "--- " + front_matter[3:], "  \n\n" + front_matter):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(spec.SpecError, "a.md: front matter は 1 行目の先頭から"):
+                    spec.parse_front_matter("a.md", text, ["ios", "android"])
+
+    def test_horizontal_rule_is_not_front_matter(self) -> None:
+        text = "# 題\n\n---\n\nstatus: の書き方\n"
+        self.assertEqual(spec.parse_front_matter("a.md", text, ["ios"]), ({"ios": "shipped"}, text))
+        text = "\n---\n\n本文\n"
+        self.assertEqual(spec.parse_front_matter("a.md", text, ["ios"]), ({"ios": "shipped"}, text))
+
     def test_missing_platform_fails(self) -> None:
         with self.assertRaisesRegex(spec.SpecError, "すべて書きます"):
             spec.parse_front_matter("a.md", "---\nstatus:\n  ios: shipped\n---\n# 題\n", ["ios", "android"])

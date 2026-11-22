@@ -99,6 +99,9 @@ def parse_front_matter(path: str, text: str, platforms: list[str]) -> tuple[dict
     """先頭の `status:` だけを読む。PyYAML を入れずに CI で動かすため、書ける形をこの 1 つに絞っている。"""
     default = {platform: "shipped" for platform in platforms}
     if not text.startswith("---\n"):
+        # 前に空行・BOM がある、--- の後ろに空白がある front matter は、読まれずに全 OS が shipped になり、本文にも出てしまう
+        if re.match(r"\ufeff?\s*---[ \t]*\n\s*status[ \t]*:", text):
+            raise SpecError(f"{path}: front matter は 1 行目の先頭から --- だけの行で始めます（前の空行・BOM、--- の後ろの空白を消す）")
         return default, text
     end = text.find("\n---\n", 4)
     if end == -1:
