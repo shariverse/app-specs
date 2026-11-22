@@ -24,8 +24,11 @@
 | [ホーム画面ウィジェット](features/10-home-widgets.md) | あり | あり |
 | [ロック画面のカウントダウン](features/11-lock-screen.md) | あり | 予定 |
 | [当日のライブアクティビティ](features/12-live-activity.md) | あり | 予定 |
-| [シェア](features/13-share.md) | 予定 | 予定 |
-| [推し活カウントダウン Plus](features/14-plus.md) | 予定 | 予定 |
+| [シェア](features/13-share.md) | あり | 予定 |
+| [推し活カウントダウン Plus](features/14-plus.md) | あり | 予定 |
+| [推しの並べ替え](features/15-oshi-order.md) | あり | 予定 |
+| [推しの写真ウィジェット](features/16-photo-widget.md) | あり | 予定 |
+| [背景・飾りの着せ替え](features/17-dress-up.md) | 予定 | 予定 |
 <!-- features:end -->
 
 ## 読む順番
@@ -40,4 +43,4 @@
 - [iOS 版だけの決定](platforms/ios.md) <!-- only: ios -->
 - [Android 版だけの決定](platforms/android.md) <!-- only: android -->
 
-推し色の値は [`design/tokens.json`](design/tokens.json) にもある（表と同じ値）。
+推し色の値と、推しなしの予定の色・推し色を薄く敷くときの割合は [`design/tokens.json`](design/tokens.json) にもある（表と同じ値）。

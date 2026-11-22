@@ -1,7 +1,7 @@
 # 推し活カウントダウン ロードマップ
 
 次に作るものと、検討中のもの。各 OS の `docs/spec/` には配らない。
-作ると決めたものは `features/` に `planned` で書き、作り終えたら `shipped` にする（[機能と対応状況](README.md#機能と対応状況)）。
+作ると決めたものは `features/` に `planned` で書き、実装がその OS の既定のブランチに入ったら `shipped` にする（[機能と対応状況](README.md#機能と対応状況)）。
 
 ## 作っているもの
 
@@ -18,6 +18,7 @@ iOS 版で先に出したもの。順番は決めていない。
 
 - [通知](features/09-notifications.md)
 - [写真の調整](features/07-photo-crop.md)
+- [推しの並べ替え](features/15-oshi-order.md)
 - [ロック画面のカウントダウン](features/11-lock-screen.md)（Android の端末のどこに置くかから決める）
 - [当日のライブアクティビティ](features/12-live-activity.md)（Android での形から決める）
 
