@@ -367,10 +367,33 @@ def rewrite_links(
     return LINK.sub(replace, text)
 
 
+def app_files(app: App) -> list[tuple[str, Path]]:
+    """アプリのフォルダの中のファイルを、(アプリの中のパス, 場所) で、パスの順に返す。
+
+    シンボリックリンクを辿ると、リポジトリの外のファイル（同期のランナーに残る認証情報など）を読んで配ってしまうので、見つけたら止める。
+    """
+    root = app.directory
+    if root.is_symlink():
+        raise SpecError(f"{app.key}: アプリのフォルダをシンボリックリンクにはできません")
+    real_root = root.resolve()
+    found = []
+    for file in sorted(root.rglob("*")):
+        path = file.relative_to(root).as_posix()
+        if file.is_symlink():
+            raise SpecError(f"{app.key}/{path}: シンボリックリンクは置けません（リンク先の中身を配ってしまうため）")
+        if file.is_dir():
+            continue
+        if not file.is_file() or real_root not in file.resolve().parents:
+            raise SpecError(f"{app.key}/{path}: アプリのフォルダの中の、ふつうのファイルではありません")
+        found.append((path, file))
+    return found
+
+
 def load_documents(app: App) -> dict[str, Document]:
     documents = {}
-    for file in sorted(app.directory.rglob("*.md")):
-        path = file.relative_to(app.directory).as_posix()
+    for path, file in app_files(app):
+        if file.suffix != ".md":
+            continue
         text = file.read_text(encoding="utf-8")
         status, body = parse_front_matter(f"{app.key}/{path}", text, app.platforms)
         if path.startswith("platforms/") and text.startswith("---\n"):
@@ -459,10 +482,9 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
             body = f"{title}\n\n{planned_notice(platform)}\n{rest.lstrip(chr(10))}"
         files[target] = (header(f"{app.key}/{path}", commit) + body).encode("utf-8")
 
-    for file in sorted(app.directory.rglob("*")):
-        if file.is_dir() or file.suffix == ".md":
+    for path, file in app_files(app):
+        if file.suffix == ".md":
             continue
-        path = file.relative_to(app.directory).as_posix()
         if path.startswith("platforms/"):
             raise SpecError(f"{app.key}/{path}: platforms/ には Markdown だけを置きます")
         if output_path(path, platform, documents) is not None:
@@ -470,6 +492,8 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
 
     for name in SHARED_FILES:
         file = ROOT / name
+        if file.is_symlink():
+            raise SpecError(f"{name}: シンボリックリンクにはできません（リンク先の中身を配ってしまうため）")
         if not file.exists():
             continue
         # どのアプリにも配るファイルなので、このアプリに無い OS の only も書ける（その分は出さないだけ）

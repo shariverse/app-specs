@@ -530,5 +530,52 @@ class AppsTests(FixtureTestCase):
                 self.assertIn("owner/name の形", stderr.getvalue())
 
 
+class SymlinkTests(FixtureTestCase):
+    """シンボリックリンクは辿らない（リポジトリの外のファイルを docs/spec/ に写さない）。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.outside = tempfile.TemporaryDirectory()
+        self.addCleanup(self.outside.cleanup)
+        self.secret = Path(self.outside.name) / "config"
+        self.secret.write_text("token = secret\n", encoding="utf-8")
+
+    def assert_stops(self, message: str) -> None:
+        for platform in ("ios", "android"):
+            with self.subTest(platform=platform):
+                with self.assertRaisesRegex(spec.SpecError, message):
+                    self.render(platform)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            self.assertEqual(spec.main(["check"]), 1)
+        self.assertRegex(stderr.getvalue(), message)
+
+    def test_symlinked_file_fails(self) -> None:
+        (self.root / "sample-app/design/config.json").symlink_to(self.secret)
+        self.assert_stops("sample-app/design/config.json: シンボリックリンクは置けません")
+
+    def test_symlinked_markdown_fails(self) -> None:
+        (self.root / "sample-app/features/09-leak.md").symlink_to(self.secret)
+        self.assert_stops("sample-app/features/09-leak.md: シンボリックリンクは置けません")
+
+    def test_symlinked_directory_fails(self) -> None:
+        (self.root / "sample-app/design/more").symlink_to(self.outside.name, target_is_directory=True)
+        self.assert_stops("sample-app/design/more: シンボリックリンクは置けません")
+
+    def test_symlink_inside_the_app_also_fails(self) -> None:
+        (self.root / "sample-app/design/copy.json").symlink_to(self.root / "sample-app/design/tokens.json")
+        self.assert_stops("sample-app/design/copy.json: シンボリックリンクは置けません")
+
+    def test_symlinked_app_directory_fails(self) -> None:
+        (self.root / "sample-app").rename(Path(self.outside.name) / "sample-app")
+        (self.root / "sample-app").symlink_to(Path(self.outside.name) / "sample-app", target_is_directory=True)
+        self.assert_stops("sample-app: アプリのフォルダをシンボリックリンクにはできません")
+
+    def test_symlinked_shared_file_fails(self) -> None:
+        (self.root / "shariverse.md").unlink()
+        (self.root / "shariverse.md").symlink_to(self.secret)
+        self.assert_stops("shariverse.md: シンボリックリンクにはできません")
+
+
 if __name__ == "__main__":
     unittest.main()
