@@ -51,10 +51,17 @@ jobs:
           path: target
 
       # 生成したものには元のコミットが入るので、そのまま比べると、どのコミットでも差分になる。
-      # 比べる先の docs/spec/ と同じコミットで生成し直して、中身が同じかを見る。
-      # 1. 開いている spec-sync と同じなら、この OS には関係ない変更として、PR を作り直さない（下の手順を飛ばす）
-      # 2. 既定のブランチと同じなら、docs/spec/ を触らない。下の create-pull-request は差分なしとして、
-      #    開いている spec-sync の PR があれば閉じる（spec-sync で足した変更を取り消したときなど）
+      # 比べる先の docs/spec/ に書いてあるコミットの名前で、今の仕様から生成し直して、中身が同じかを見る。
+      #
+      # 1. 既定のブランチの docs/spec/ が今の仕様と同じなら、docs/spec/ を触らない。下の create-pull-request は差分なしとして、
+      #    spec-sync のブランチがあれば消す（開いている PR は閉じる。spec-sync で足した変更を取り消したとき、入れ終わったブランチが残っているときなど）
+      # 2. spec-sync のブランチの中身が今の仕様と同じで、Sync が作ったままなら、この OS には関係ない変更として、
+      #    PR を作り直さない（下の手順を飛ばす）。
+      #    「Sync が作ったまま」は、作ったときから既定のブランチの docs/spec/ が動いておらず、docs/spec/ だけを変える 1 コミットであること
+      # 3. spec-sync の中身は同じでも 2 に当たらないとき（既定のブランチの docs/spec/ が、作業ブランチ経由で入った・取り消されたなどで動いた。
+      #    spec-sync にコミットが足された）は、同じ中身・同じコミットの名前で docs/spec/ を書いて、
+      #    下の create-pull-request に渡す。create-pull-request が、既定のブランチの先頭から作り直す
+      # 4. それ以外（spec-sync が無い・中身が違う）は、今のコミットで生成する
       - name: docs/spec/ を生成
         id: generate
         env:
@@ -66,29 +73,49 @@ jobs:
             python3 app-specs/scripts/generate_spec.py generate \
               --app "$APP" --platform "$PLATFORM" --out "$1" --source-commit "$2"
           }
-          # $1 の docs/spec/ を、それと同じコミットで生成し直したものと比べる
+          # $1 の docs/spec/ が、そこに書いてあるコミットの名前で今の仕様から生成し直したものと同じか。同じなら $commit にその名前が入る。
+          # 生成できないときのエラーは、最後の generate で出る（ここでは出さない）
           unchanged_from() {
             [ -f "$1/.source.json" ] || return 1
-            commit=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["commit"])' "$1/.source.json")
+            commit=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["commit"])' "$1/.source.json" 2>/dev/null) || return 1
+            [ -n "$commit" ] || return 1
             rm -rf "$RUNNER_TEMP/unchanged"
-            generate "$RUNNER_TEMP/unchanged" "$commit"
+            generate "$RUNNER_TEMP/unchanged" "$commit" 2>/dev/null || return 1
             diff -r "$RUNNER_TEMP/unchanged" "$1" > /dev/null
           }
-          if git -C target fetch --depth=1 origin spec-sync 2>/dev/null; then
-            mkdir -p "$RUNNER_TEMP/spec-sync"
-            if git -C target archive FETCH_HEAD docs/spec 2>/dev/null | tar -x -C "$RUNNER_TEMP/spec-sync" \
-              && unchanged_from "$RUNNER_TEMP/spec-sync/docs/spec"; then
-              echo "$PLATFORM 版の仕様は開いている spec-sync と変わらないので、PR を触りません"
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-          fi
+          # $1 のコミットの docs/spec/ のツリー。無ければ none
+          tree() {
+            git -C target rev-parse --verify --quiet "$1:docs/spec" || echo none
+          }
+          # spec-sync が、Sync の作ったままか（FETCH_HEAD は spec-sync の先頭。1 つ前のコミットまで取ってある）
+          made_by_sync() {
+            [ "$(tree 'FETCH_HEAD~1')" = "$(tree HEAD)" ] \
+              && git -C target diff --quiet 'FETCH_HEAD~1' FETCH_HEAD -- . ':(exclude)docs/spec' 2>/dev/null
+          }
           current=target/docs/spec
           if unchanged_from "$current"; then
-            echo "$PLATFORM 版の仕様は変わっていないので、docs/spec/ を触りません"
+            echo "$PLATFORM 版の仕様は既定のブランチと変わらないので、docs/spec/ を触りません（spec-sync が残っていれば、create-pull-request が消します）"
             exit 0
           fi
-          generate "$current" "$SHA"
+          label=$SHA
+
+          if git -C target fetch --quiet --depth=2 origin spec-sync 2>/dev/null; then
+            if git -C target cat-file -e FETCH_HEAD:docs/spec 2>/dev/null; then
+              mkdir -p "$RUNNER_TEMP/spec-sync"
+              git -C target archive FETCH_HEAD docs/spec | tar -x -C "$RUNNER_TEMP/spec-sync"
+              if unchanged_from "$RUNNER_TEMP/spec-sync/docs/spec"; then
+                if made_by_sync; then
+                  echo "$PLATFORM 版の仕様は spec-sync と変わらないので、PR を触りません"
+                  echo "skip=true" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+                echo "$PLATFORM 版の仕様は spec-sync と変わらないが、spec-sync が Sync の作ったままではないので、同じ中身で作り直します"
+                label=$commit
+              fi
+            fi
+          fi
+          generate "$current" "$label"
+          echo "commit=$label" >> "$GITHUB_OUTPUT"
 
       - if: steps.generate.outputs.skip != 'true'
         uses: peter-evans/create-pull-request@v7
@@ -104,7 +131,7 @@ jobs:
           body: |
             [app-specs](https://github.com/shariverse/app-specs) の `${{ matrix.app }}` を ${{ matrix.platform }} 版として生成した `docs/spec/` です。
 
-            - 元のコミット: https://github.com/shariverse/app-specs/commit/${{ github.sha }}
+            - 元のコミット: https://github.com/shariverse/app-specs/commit/${{ steps.generate.outputs.commit }}
             - `docs/spec/` は直接編集しないでください。変えるときは app-specs に PR を出します
 
             仕様の変更を実装するときは、このブランチ（`spec-sync`）から作業ブランチを切り、実装と一緒にマージします。
