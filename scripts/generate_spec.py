@@ -31,8 +31,9 @@ STATUS_LABELS = {"shipped": "あり", "planned": "予定", "undecided": "未定"
 INCLUDED_STATUSES = {"shipped", "planned"}
 SOURCE_FILE = ".source.json"
 # 決まっていないもの・よく変わるものは、各 OS で実装の根拠として読まれないよう配らない
+# 名前は小文字で書く。大文字小文字と置いた階層に依らずに比べる（Proposals/ や features/notes/ も配らない）
 UNDISTRIBUTED_FILES = {"roadmap.md"}
-UNDISTRIBUTED_DIRECTORIES = ("proposals/", "notes/")
+UNDISTRIBUTED_DIRECTORIES = {"proposals", "notes"}
 # 配らないもののうち、仕様の補足として各 OS からも辿れるよう、リンクを GitHub の URL にして残すもの
 LINKED_BY_URL_DIRECTORIES = ("notes/",)
 # Markdown のほかに配るファイルの種類。スクリプト・設定・ワークフローの形をしたものが、各 OS のリポジトリに届かないようにする
@@ -315,11 +316,15 @@ def is_ignored(source: str) -> bool:
     return any(part.startswith(".") for part in source.split("/")) or source.endswith("~")
 
 
+def is_undistributed(source: str) -> bool:
+    """各 OS に配らないと決めた名前か。Linux では大文字小文字が違うと別の名前になるので、小文字にそろえて、どの階層でも比べる。"""
+    parts = source.lower().split("/")
+    return parts[-1] in UNDISTRIBUTED_FILES or any(part in UNDISTRIBUTED_DIRECTORIES for part in parts)
+
+
 def output_path(source: str, platform: str, documents: dict[str, Document]) -> str | None:
     """共通仕様のパスを、その OS の docs/spec/ の中のパスにする。出さないファイルは None。"""
-    if is_ignored(source):
-        return None
-    if source in UNDISTRIBUTED_FILES or source.startswith(UNDISTRIBUTED_DIRECTORIES):
+    if is_ignored(source) or is_undistributed(source):
         return None
     if source.startswith("platforms/"):
         return "platform.md" if source == f"platforms/{platform}.md" else None
@@ -420,7 +425,9 @@ def load_documents(app: App) -> dict[str, Document]:
 
 
 def features(documents: dict[str, Document]) -> list[Document]:
-    return [document for path, document in documents.items() if path.startswith("features/")]
+    return [
+        document for path, document in documents.items() if path.startswith("features/") and not is_undistributed(path)
+    ]
 
 
 def full_index(app: App, documents: dict[str, Document]) -> str:

@@ -300,6 +300,33 @@ class RenderTests(FixtureTestCase):
         self.assertFalse([path for path in files if path.startswith("proposals/")])
         self.assertIn("product.md", files)
 
+    def test_undistributed_names_ignore_case_and_depth(self) -> None:
+        paths = ("ROADMAP.md", "Proposals/idea.md", "Notes/memo.md", "features/notes/memo.md", "features/roadmap.md", "design/PROPOSALS/a.png")
+        for path in paths:
+            write(self.root, "sample-app/" + path, "# 決まっていない案\n")
+        for platform in ("ios", "android"):
+            files = self.render(platform)
+            for path in paths:
+                self.assertNotIn(path, files)
+            self.assertNotIn("決まっていない案", files["README.md"])
+        _, index = spec.readme_with_index(self.app)
+        self.assertNotIn("決まっていない案", index)
+
+    def test_is_undistributed(self) -> None:
+        # 大文字小文字を区別しないファイルシステムでも確かめられるよう、名前だけでも見る
+        for path in ("roadmap.md", "ROADMAP.md", "sub/Roadmap.md", "proposals/a.md", "Proposals/a.md", "notes/a.png", "features/NOTES/a.md", "notes"):
+            self.assertTrue(spec.is_undistributed(path), path)
+        for path in ("rules.md", "features/notes.md", "features/01-proposals.md", "design/roadmap.json", "my-notes/a.md"):
+            self.assertFalse(spec.is_undistributed(path), path)
+
+    def test_links_to_undistributed_names_fail(self) -> None:
+        write(self.root, "sample-app/Proposals/idea.md", "# 案\n")
+        for href in ("Proposals/idea.md", "notes", "proposals/"):
+            with self.subTest(href=href):
+                write(self.root, "sample-app/rules.md", f"# 規則\n\n[案]({href})\n")
+                with self.assertRaisesRegex(spec.SpecError, "docs/spec/ に出さないファイルへのリンク"):
+                    self.render("ios")
+
     def test_notes_are_linked_by_url(self) -> None:
         write(self.root, "sample-app/features/02-crop.md", "# 写真の調整\n\n[補足](../notes/crop.md#理由)\n")
         files = self.render("android")
