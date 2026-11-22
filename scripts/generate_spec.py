@@ -53,6 +53,7 @@ HTML_LINK_ATTRIBUTE = re.compile(r"""\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)'
 # コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、1 行の中のインラインコード
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+REPOSITORY = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 INDEX_START = "<!-- features:start -->"
 INDEX_END = "<!-- features:end -->"
 
@@ -91,13 +92,27 @@ class Document:
 
 
 def load_apps() -> dict[str, App]:
-    data = json.loads((ROOT / "apps.json").read_text(encoding="utf-8"))
+    """apps.json を読む。形の誤りは、同期のワークフローが動く前に check で止められるよう、ここで確かめる。"""
+    try:
+        data = json.loads((ROOT / "apps.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise SpecError(f"apps.json を読めません: {error}") from error
+    if not isinstance(data, dict):
+        raise SpecError("apps.json: いちばん外は、アプリのキーから設定への対応にします")
     apps = {}
     for key, value in data.items():
-        unknown = set(value["repositories"]) - set(PLATFORM_LABELS)
+        if not isinstance(value, dict) or not isinstance(value.get("name"), str) or not value["name"].strip():
+            raise SpecError(f"apps.json: {key} に name（アプリの名前）がありません")
+        repositories = value.get("repositories")
+        if not isinstance(repositories, dict) or not repositories:
+            raise SpecError(f"apps.json: {key} に repositories（OS からリポジトリへの対応）がありません")
+        unknown = set(repositories) - set(PLATFORM_LABELS)
         if unknown:
             raise SpecError(f"apps.json: {key} に知らない OS があります: {sorted(unknown)}")
-        apps[key] = App(key=key, name=value["name"], repositories=value["repositories"])
+        for platform, repository in repositories.items():
+            if not isinstance(repository, str) or not REPOSITORY.fullmatch(repository):
+                raise SpecError(f"apps.json: {key} の {platform} のリポジトリは owner/name の形で書きます: {repository!r}")
+        apps[key] = App(key=key, name=value["name"], repositories=repositories)
     return apps
 
 
@@ -523,7 +538,10 @@ def check_undistributed_links(app: App, documents: dict[str, Document]) -> list[
 
 def command_check(_: argparse.Namespace) -> None:
     errors = []
-    for app in load_apps().values():
+    apps = load_apps()
+    # 同期のワークフローが最初に作る一覧。ここで作れなければ、main に入ってから Sync が落ちる
+    targets(apps)
+    for app in apps.values():
         try:
             errors.extend(check_undistributed_links(app, load_documents(app)))
             current, expected = readme_with_index(app)
@@ -546,18 +564,21 @@ def command_write_index(_: argparse.Namespace) -> None:
             print(f"{app.key}/README.md を書き直しました")
 
 
-def command_targets(_: argparse.Namespace) -> None:
-    targets = [
+def targets(apps: dict[str, App]) -> list[dict[str, str]]:
+    return [
         {
             "app": app.key,
             "platform": platform,
             "repository": repository,
             "repository_name": repository.split("/", 1)[1],
         }
-        for app in load_apps().values()
+        for app in apps.values()
         for platform, repository in app.repositories.items()
     ]
-    print(json.dumps(targets, ensure_ascii=False))
+
+
+def command_targets(_: argparse.Namespace) -> None:
+    print(json.dumps(targets(load_apps()), ensure_ascii=False))
 
 
 def main(argv: list[str] | None = None) -> int:

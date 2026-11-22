@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import tempfile
 import textwrap
@@ -453,6 +455,62 @@ class CodeTests(FixtureTestCase):
         write(self.root, "sample-app/notes/crop.md", "# 補足\n\n```\n[無い](none.md)\n```\n")
         self.assertIn("`[文字](パス)`", self.render("ios")["shariverse.md"])
         self.assertEqual(spec.check_undistributed_links(self.app, spec.load_documents(self.app)), [])
+
+
+class AppsTests(FixtureTestCase):
+    def apps(self, data: object) -> None:
+        (self.root / "apps.json").write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+
+    def test_targets(self) -> None:
+        self.assertEqual(
+            spec.targets(spec.load_apps()),
+            [
+                {
+                    "app": "sample-app",
+                    "platform": "ios",
+                    "repository": "shariverse/sample-app-ios",
+                    "repository_name": "sample-app-ios",
+                },
+                {
+                    "app": "sample-app",
+                    "platform": "android",
+                    "repository": "shariverse/sample-app-android",
+                    "repository_name": "sample-app-android",
+                },
+            ],
+        )
+
+    def test_malformed_apps_fail(self) -> None:
+        repositories = {"ios": "shariverse/sample-app-ios"}
+        cases = [
+            ("{broken", "apps.json を読めません"),
+            (["sample-app"], "いちばん外は"),
+            ({"sample-app": "shariverse/sample-app-ios"}, "sample-app に name"),
+            ({"sample-app": {"repositories": repositories}}, "sample-app に name"),
+            ({"sample-app": {"name": " ", "repositories": repositories}}, "sample-app に name"),
+            ({"sample-app": {"name": "サンプル"}}, "sample-app に repositories"),
+            ({"sample-app": {"name": "サンプル", "repositories": {}}}, "sample-app に repositories"),
+            ({"sample-app": {"name": "サンプル", "repositories": ["shariverse/sample-app-ios"]}}, "sample-app に repositories"),
+            ({"sample-app": {"name": "サンプル", "repositories": {"web": "shariverse/sample-app-web"}}}, "知らない OS"),
+            ({"sample-app": {"name": "サンプル", "repositories": {"ios": "sample-app-ios"}}}, "ios のリポジトリは owner/name の形"),
+            ({"sample-app": {"name": "サンプル", "repositories": {"ios": "shariverse/sample/app"}}}, "owner/name の形"),
+            ({"sample-app": {"name": "サンプル", "repositories": {"ios": None}}}, "owner/name の形"),
+        ]
+        for data, message in cases:
+            with self.subTest(data=data):
+                self.apps(data)
+                with self.assertRaisesRegex(spec.SpecError, message):
+                    spec.load_apps()
+
+    def test_check_fails_on_malformed_apps(self) -> None:
+        # 前は check が通り、main に入ってから Sync の targets が IndexError で落ちた
+        self.apps({"sample-app": {"name": "サンプル", "repositories": {"ios": "sample-app-ios"}}})
+        for command in ("check", "targets"):
+            with self.subTest(command=command):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr):
+                    self.assertEqual(spec.main([command]), 1)
+                self.assertIn("owner/name の形", stderr.getvalue())
 
 
 if __name__ == "__main__":
