@@ -45,6 +45,11 @@ LINE_ONLY = re.compile(r"\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
 ONLY_LEFTOVER = re.compile(r"<!--\s*/?\s*only\b", re.IGNORECASE)
 # [文字](リンク先) と [文字](リンク先 "タイトル")。タイトルは、そのまま残す
 LINK = re.compile(r"""(\]\()([^)\s]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\))""")
+# 書き換えも確認もできない形のリンク: 参照式（[名前]: リンク先。脚注の [^1]: は除く）・<> で囲んだリンク先・HTML の a と img
+REFERENCE_LINK = re.compile(r"^ {0,3}\[(?!\^)[^\]\n]+\]:[ \t]*(\S+)", re.MULTILINE)
+ANGLE_LINK = re.compile(r"\]\(<")
+HTML_TAG = re.compile(r"<(?:a|img)\b", re.IGNORECASE)
+HTML_LINK_ATTRIBUTE = re.compile(r"""\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
 # コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、1 行の中のインラインコード
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
@@ -241,6 +246,50 @@ def links(path: str, text: str) -> list[re.Match[str]]:
     return [match for match in LINK.finditer(text) if not in_code(match.start())]
 
 
+class Finder:
+    """文字列を前から順に探す。見つけた位置を覚えておき、同じ場所を何度も読まない（長い行でも遅くならない）。"""
+
+    def __init__(self, text: str, needle: str) -> None:
+        self.text = text
+        self.needle = needle
+        self.found = -1
+
+    def after(self, position: int) -> int:
+        """position 以降で最初に needle がある位置。無ければ文字列の長さ。position は、前に聞いた値以上で呼ぶ。"""
+        if self.found < position:
+            index = self.text.find(self.needle, position)
+            self.found = len(self.text) if index == -1 else index
+        return self.found
+
+
+def unsupported_relative_links(path: str, text: str) -> list[tuple[str, str]]:
+    """[文字](リンク先) 以外の形で書いた相対リンクを、(形の名前, リンク先) で返す。
+
+    この形は生成で書き換えられず、リンク先があるか・その OS に出すファイルかも確かめられない。
+    配った先で切れたリンクになるので、呼ぶ側で止める。
+    """
+    in_code = code_checker(path, text)
+    found = []
+    for match in REFERENCE_LINK.finditer(text):
+        found.append((match.start(), "参照式のリンク（[名前]: リンク先）", match.group(1)))
+    # ](<リンク先>) のリンク先は、同じ行の中の次の > まで（途中に < は入らない）
+    close, opening, newline = Finder(text, ">"), Finder(text, "<"), Finder(text, "\n")
+    for match in ANGLE_LINK.finditer(text):
+        end = close.after(match.end())
+        if end < min(opening.after(match.end()), newline.after(match.end())):
+            found.append((match.start(), "<> で囲んだリンク先", text[match.end() : end]))
+    # HTML のタグは、<a か <img から、同じ段落の中の次の > まで
+    close, blank = Finder(text, ">"), Finder(text, "\n\n")
+    end = 0
+    for tag in HTML_TAG.finditer(text):
+        if tag.start() < end or close.after(tag.end()) > blank.after(tag.end()):
+            continue
+        end = close.after(tag.end())
+        for match in HTML_LINK_ATTRIBUTE.finditer(text, tag.end(), end):
+            found.append((tag.start(), "HTML のリンク（href・src）", match.group(1) or match.group(2) or ""))
+    return [(kind, href) for position, kind, href in sorted(found) if not in_code(position) and is_relative(href)]
+
+
 def output_path(source: str, platform: str, documents: dict[str, Document]) -> str | None:
     """共通仕様のパスを、その OS の docs/spec/ の中のパスにする。出さないファイルは None。"""
     if source in UNDISTRIBUTED_FILES or source.startswith(UNDISTRIBUTED_DIRECTORIES):
@@ -264,6 +313,8 @@ def rewrite_links(
     target = output_path(source, platform, documents)
     assert target is not None
     in_code = code_checker(f"{app.key}/{source}", text)
+    for kind, href in unsupported_relative_links(f"{app.key}/{source}", text):
+        raise SpecError(f"{app.key}/{source}: {kind}は、相対パスでは書けません（[文字](リンク先) の形にする）: {href}")
 
     def replace(match: re.Match[str]) -> str:
         href = match.group(2)
@@ -404,9 +455,10 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
         if not file.exists():
             continue
         body = filter_platform(name, file.read_text(encoding="utf-8"), platform, app.platforms)
-        for match in links(name, body):
-            if is_relative(match.group(2)):
-                raise SpecError(f"{name}: 各アプリに配るので、相対リンクは書けません（URL にする）: {match.group(2)}")
+        relative = [match.group(2) for match in links(name, body) if is_relative(match.group(2))]
+        relative += [href for _, href in unsupported_relative_links(name, body)]
+        if relative:
+            raise SpecError(f"{name}: 各アプリに配るので、相対リンクは書けません（URL にする）: {relative[0]}")
         files[name] = (header(name, commit) + body).encode("utf-8")
 
     source = {

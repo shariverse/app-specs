@@ -187,6 +187,37 @@ class RenderTests(FixtureTestCase):
         with self.assertRaisesRegex(spec.SpecError, "Android 版の docs/spec/ に出さないファイルへのリンク"):
             self.render("android")
 
+    def test_relative_links_in_unsupported_forms_fail(self) -> None:
+        cases = {
+            "[この OS だけの決定][p]\n\n[p]: platforms/android.md\n": "参照式のリンク（\\[名前\\]: リンク先）は、相対パスでは書けません.*: platforms/android.md",
+            "[次に作るもの][r]\n\n   [r]: roadmap.md\n": "参照式のリンク.*: roadmap.md",
+            "[補足](<notes/crop.md>)\n": "<> で囲んだリンク先は、相対パスでは書けません.*: notes/crop.md",
+            "[テーマ](<design/my theme.md>)\n": "<> で囲んだリンク先.*: design/my theme.md",
+            '<a href="features/01-home.md">ホーム</a>\n': "HTML のリンク（href・src）は、相対パスでは書けません.*: features/01-home.md",
+            "<IMG alt='図' SRC = 'design/tokens.json'>\n": "HTML のリンク.*: design/tokens.json",
+        }
+        for text, message in cases.items():
+            with self.subTest(text=text):
+                write(self.root, "sample-app/rules.md", "# 規則\n\n" + text)
+                with self.assertRaisesRegex(spec.SpecError, "^sample-app/rules.md: " + message):
+                    self.render("android")
+
+    def test_urls_and_code_in_unsupported_forms_pass(self) -> None:
+        text = (
+            "# 規則\n\n[外][e] [図](<https://example.com/a b>) <a href=\"https://example.com/\">外</a> <a href='#並び'>並び</a>\n"
+            "脚注[^1]。参照式は `[p]: platforms/ios.md` と書かない。<a name=\"並び\"></a> <a 閉じていない\n\n"
+            "[e]: https://example.com/\n[^1]: 脚注の文。\n\n```html\n<img src=\"design/none.png\">\n[p]: none.md\n```\n"
+        )
+        write(self.root, "sample-app/rules.md", text)
+        self.assertEqual(self.render("android")["rules.md"].split("-->\n\n", 1)[1], text)
+
+    def test_shared_file_rejects_relative_links_in_unsupported_forms(self) -> None:
+        for text in ("[アプリ][a]\n\n[a]: sample-app/README.md\n", '<a href="sample-app/README.md">アプリ</a>\n'):
+            with self.subTest(text=text):
+                write(self.root, "shariverse.md", "# 方針\n\n" + text)
+                with self.assertRaisesRegex(spec.SpecError, "shariverse.md: .*相対リンクは書けません（URL にする）: sample-app/README.md"):
+                    self.render("ios")
+
     def test_platform_index(self) -> None:
         readme = self.render("android")["README.md"]
         self.assertIn("| [ホーム](features/01-home.md) | あり |", readme)
