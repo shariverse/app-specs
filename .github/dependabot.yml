@@ -1,0 +1,7 @@
+version: 2
+updates:
+  # ワークフローの Action はコミットの SHA で固定している。SHA と、コメントの版を PR で更新する
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

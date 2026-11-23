@@ -8,43 +8,60 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# GITHUB_TOKEN は、このリポジトリを読むのにだけ使う。各 OS のリポジトリには App のトークンで書く
+permissions:
+  contents: read
+
+# main 以外で手動実行しても（下の if で何もしない）、待っている main の実行を取り消さないよう、ブランチごとに分ける
 concurrency:
-  group: sync
+  group: sync-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   targets:
+    # 配るのは main の仕様だけ。手動実行でほかのブランチを選んでも、何もしない。
     # GitHub App を用意するまでは、失敗させずに飛ばす
-    if: vars.SPEC_SYNC_APP_ID != ''
+    if: github.ref == 'refs/heads/main' && vars.SPEC_SYNC_APP_ID != ''
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - id: list
         run: echo "matrix=$(python3 scripts/generate_spec.py targets)" >> "$GITHUB_OUTPUT"
 
   sync:
     needs: targets
     runs-on: ubuntu-latest
+    # 秘密鍵（SPEC_SYNC_APP_PRIVATE_KEY）はこの environment の secret に置き、Deployment branches を main だけにする。
+    # main のワークフローだけが鍵を使える
+    environment: spec-sync
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.targets.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           path: app-specs
+          persist-credentials: false
 
       - id: token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
         with:
           app-id: ${{ vars.SPEC_SYNC_APP_ID }}
           private-key: ${{ secrets.SPEC_SYNC_APP_PRIVATE_KEY }}
           owner: shariverse
           repositories: ${{ matrix.repository_name }}
+          # App に権限を足しても、ここで作るトークンは PR を出すのに要る分だけにする
+          permission-contents: write
+          permission-pull-requests: write
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ matrix.repository }}
           token: ${{ steps.token.outputs.token }}
@@ -91,7 +108,7 @@ jobs:
           generate "$current" "$SHA"
 
       - if: steps.generate.outputs.skip != 'true'
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
         with:
           path: target
           token: ${{ steps.token.outputs.token }}
