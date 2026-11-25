@@ -29,6 +29,7 @@
 | [推しの並べ替え](features/15-oshi-order.md) | あり | 予定 |
 | [推しの写真ウィジェット](features/16-photo-widget.md) | あり | 予定 |
 | [背景・飾りの着せ替え](features/17-dress-up.md) | あり | 予定 |
+| [推し活のモチーフ](features/18-oshikatsu-motifs.md) | あり | 予定 |
 <!-- features:end -->
 
 ## 読む順番
