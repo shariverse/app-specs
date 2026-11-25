@@ -11,6 +11,7 @@
 | [推しの写真ウィジェット](features/16-photo-widget.md) | 実装済み。1.3.0 で出す | 時期は未定 |
 | [背景・飾りの着せ替え](features/17-dress-up.md) | 実装済み。1.3.0 で出す | 時期は未定 |
 | [シェア](features/13-share.md) | 実装済み。1.3.0 で出す | 時期は未定 |
+| [推し活のモチーフ](features/18-oshikatsu-motifs.md)（ホームと推しの一覧） | 実装済み。1.4.0 で出す | 時期は未定 |
 | [残り時間のタイル](features/19-countdown-tiles.md)（予定の詳細の残りの見せ方） | 実装済み。1.4.0 で出す | 時期は未定 |
 
 ## Android 版で追いつくもの
