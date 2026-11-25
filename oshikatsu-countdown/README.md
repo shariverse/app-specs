@@ -30,6 +30,7 @@
 | [推しの写真ウィジェット](features/16-photo-widget.md) | あり | 予定 |
 | [背景・飾りの着せ替え](features/17-dress-up.md) | あり | 予定 |
 | [推し活のモチーフ](features/18-oshikatsu-motifs.md) | あり | 予定 |
+| [残り時間のタイル](features/19-countdown-tiles.md) | あり | 予定 |
 <!-- features:end -->
 
 ## 読む順番
