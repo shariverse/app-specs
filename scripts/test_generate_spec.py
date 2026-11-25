@@ -169,7 +169,7 @@ class RenderTests(FixtureTestCase):
         self.assertIn("[この OS だけの決定](platform.md)", files["README.md"])
         self.assertIn("[ホーム](features/01-home.md#並び)", files["rules.md"])
         self.assertIn(
-            "[全体の README](https://github.com/shariverse/app-specs/blob/abc1234/README.md)", files["README.md"]
+            "[全体の README](https://github.com/shariverse/app-specs/blob/main/README.md)", files["README.md"]
         )
 
     def test_platform_index(self) -> None:
@@ -183,9 +183,23 @@ class RenderTests(FixtureTestCase):
     def test_header_and_source(self) -> None:
         files = self.render("ios")
         self.assertTrue(files["rules.md"].startswith("<!--\n  app-specs から生成したファイル。直接編集しない。"))
-        self.assertIn("shariverse/app-specs@abc1234 sample-app/rules.md", files["rules.md"])
+        self.assertIn("元: shariverse/app-specs sample-app/rules.md\n", files["rules.md"])
         self.assertEqual(json.loads(files[".source.json"])["commit"], "abc1234")
         self.assertEqual(files["design/tokens.json"], '{"pink": "#C8326A"}\n')
+
+    def test_commit_is_written_only_to_source_file(self) -> None:
+        # 各ファイルに commit を書くと、仕様を 1 行変えるたびに全ファイルが変わり、各 OS の作業ブランチどうしがコンフリクトする
+        write(self.root, "sample-app/features/02-crop.md", "# 写真の調整\n\n[補足](../notes/crop.md) [全体の README](../../README.md)\n")
+        for platform in ("ios", "android"):
+            with self.subTest(platform=platform):
+                first = spec.render(self.app, platform, "abc1234")
+                second = spec.render(self.app, platform, "def5678")
+                self.assertEqual(first.keys(), second.keys())
+                self.assertEqual([path for path in first if first[path] != second[path]], [spec.SOURCE_FILE])
+                self.assertEqual(json.loads(second[spec.SOURCE_FILE])["commit"], "def5678")
+                for path, content in first.items():
+                    if path != spec.SOURCE_FILE:
+                        self.assertNotIn(b"abc1234", content, path)
 
     def test_link_to_excluded_file_fails(self) -> None:
         write(self.root, "sample-app/rules.md", "# 規則\n\n[テーマ](design/theme.md)\n")
@@ -208,7 +222,7 @@ class RenderTests(FixtureTestCase):
         files = self.render("android")
         self.assertFalse([path for path in files if path.startswith("notes/")])
         self.assertIn(
-            "[補足](https://github.com/shariverse/app-specs/blob/abc1234/sample-app/notes/crop.md#理由)",
+            "[補足](https://github.com/shariverse/app-specs/blob/main/sample-app/notes/crop.md#理由)",
             files["features/02-crop.md"],
         )
 

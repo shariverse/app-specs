@@ -189,13 +189,13 @@ def rewrite_links(
             if outside in SHARED_FILES:
                 mapped = outside
             else:
-                url = f"https://github.com/{SOURCE_REPOSITORY}/blob/{commit}/{outside}"
+                url = f"https://github.com/{SOURCE_REPOSITORY}/blob/main/{outside}"
                 return f"{match.group(1)}{url}{'#' + anchor if anchor else ''}{match.group(3)}"
         else:
             if not (app.directory / resolved).exists():
                 raise SpecError(f"{app.key}/{source}: リンク先がありません: {href}")
             if resolved.startswith(LINKED_BY_URL_DIRECTORIES):
-                url = f"https://github.com/{SOURCE_REPOSITORY}/blob/{commit}/{app.key}/{resolved}"
+                url = f"https://github.com/{SOURCE_REPOSITORY}/blob/main/{app.key}/{resolved}"
                 return f"{match.group(1)}{url}{'#' + anchor if anchor else ''}{match.group(3)}"
             mapped = output_path(resolved, platform, documents)
         if mapped is None:
@@ -265,7 +265,7 @@ def header(source: str, commit: str) -> str:
     return (
         "<!--\n"
         "  app-specs から生成したファイル。直接編集しない。\n"
-        f"  元: {SOURCE_REPOSITORY}@{commit} {source}\n"
+        f"  元: {SOURCE_REPOSITORY} {source}\n"
         f"  変えるときは https://github.com/{SOURCE_REPOSITORY} に PR を出す。\n"
         "-->\n\n"
     )
