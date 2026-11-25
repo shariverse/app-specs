@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import posixpath
 import re
@@ -18,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,7 +41,19 @@ SHARED_FILES = ("shariverse.md",)
 BLOCK_START = re.compile(r"^\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
 BLOCK_END = re.compile(r"^\s*<!--\s*/only\s*-->\s*$")
 LINE_ONLY = re.compile(r"\s*<!--\s*only:\s*([a-z, ]+?)\s*-->\s*$")
-LINK = re.compile(r"(\]\()([^)\s]+)(\))")
+# 印として読めなかった only（大文字・コロン抜け・印の後ろの文字など）。残すと、その OS だけの文が両方の OS に出る
+ONLY_LEFTOVER = re.compile(r"<!--\s*/?\s*only\b", re.IGNORECASE)
+# [文字](リンク先) と [文字](リンク先 "タイトル")。タイトルは、そのまま残す
+LINK = re.compile(r"""(\]\()([^)\s]+)((?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\))""")
+# 書き換えも確認もできない形のリンク: 参照式（[名前]: リンク先。脚注の [^1]: は除く）・<> で囲んだリンク先・HTML の a と img
+REFERENCE_LINK = re.compile(r"^ {0,3}\[(?!\^)[^\]\n]+\]:[ \t]*(\S+)", re.MULTILINE)
+ANGLE_LINK = re.compile(r"\]\(<")
+HTML_TAG = re.compile(r"<(?:a|img)\b", re.IGNORECASE)
+HTML_LINK_ATTRIBUTE = re.compile(r"""\b(?:href|src)\s*=\s*(?:"([^"]*)"|'([^']*)')""", re.IGNORECASE)
+# コードブロックの始まり・終わりの行（``` か ~~~ が 3 つ以上）と、1 行の中のインラインコード
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
+INLINE_CODE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+REPOSITORY = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+")
 INDEX_START = "<!-- features:start -->"
 INDEX_END = "<!-- features:end -->"
 
@@ -65,26 +79,43 @@ class App:
 
 @dataclass(frozen=True)
 class Document:
+    app: str
     path: str
     status: dict[str, str]
     body: str
 
     @property
     def title(self) -> str:
-        for line in self.body.splitlines():
-            if line.startswith("# "):
+        lines = self.body.splitlines()
+        for line, in_code in zip(lines, code_block_lines(f"{self.app}/{self.path}", lines)):
+            # コードブロックの中の「# コメント」は見出しではない
+            if line.startswith("# ") and not in_code:
                 return line[2:].strip()
-        raise SpecError(f"{self.path}: 先頭の見出し（# ）がありません")
+        raise SpecError(f"{self.app}/{self.path}: 先頭の見出し（# ）がありません")
 
 
 def load_apps() -> dict[str, App]:
-    data = json.loads((ROOT / "apps.json").read_text(encoding="utf-8"))
+    """apps.json を読む。形の誤りは、同期のワークフローが動く前に check で止められるよう、ここで確かめる。"""
+    try:
+        data = json.loads((ROOT / "apps.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise SpecError(f"apps.json を読めません: {error}") from error
+    if not isinstance(data, dict):
+        raise SpecError("apps.json: いちばん外は、アプリのキーから設定への対応にします")
     apps = {}
     for key, value in data.items():
-        unknown = set(value["repositories"]) - set(PLATFORM_LABELS)
+        if not isinstance(value, dict) or not isinstance(value.get("name"), str) or not value["name"].strip():
+            raise SpecError(f"apps.json: {key} に name（アプリの名前）がありません")
+        repositories = value.get("repositories")
+        if not isinstance(repositories, dict) or not repositories:
+            raise SpecError(f"apps.json: {key} に repositories（OS からリポジトリへの対応）がありません")
+        unknown = set(repositories) - set(PLATFORM_LABELS)
         if unknown:
             raise SpecError(f"apps.json: {key} に知らない OS があります: {sorted(unknown)}")
-        apps[key] = App(key=key, name=value["name"], repositories=value["repositories"])
+        for platform, repository in repositories.items():
+            if not isinstance(repository, str) or not REPOSITORY.fullmatch(repository):
+                raise SpecError(f"apps.json: {key} の {platform} のリポジトリは owner/name の形で書きます: {repository!r}")
+        apps[key] = App(key=key, name=value["name"], repositories=repositories)
     return apps
 
 
@@ -92,6 +123,9 @@ def parse_front_matter(path: str, text: str, platforms: list[str]) -> tuple[dict
     """先頭の `status:` だけを読む。PyYAML を入れずに CI で動かすため、書ける形をこの 1 つに絞っている。"""
     default = {platform: "shipped" for platform in platforms}
     if not text.startswith("---\n"):
+        # 前に空行・BOM がある、--- の後ろに空白がある front matter は、読まれずに全 OS が shipped になり、本文にも出てしまう
+        if re.match(r"\ufeff?\s*---[ \t]*\n\s*status[ \t]*:", text):
+            raise SpecError(f"{path}: front matter は 1 行目の先頭から --- だけの行で始めます（前の空行・BOM、--- の後ろの空白を消す）")
         return default, text
     end = text.find("\n---\n", 4)
     if end == -1:
@@ -107,6 +141,8 @@ def parse_front_matter(path: str, text: str, platforms: list[str]) -> tuple[dict
         if not match:
             raise SpecError(f"{path}: status の行の形が違います: {line!r}")
         platform, value = match.groups()
+        if platform in status:
+            raise SpecError(f"{path}: status に {platform} が 2 回あります")
         if value not in STATUS_LABELS:
             raise SpecError(f"{path}: status に {value!r} は書けません（{', '.join(STATUS_LABELS)}）")
         status[platform] = value
@@ -115,8 +151,58 @@ def parse_front_matter(path: str, text: str, platforms: list[str]) -> tuple[dict
     return status, body
 
 
+def code_block_lines(path: str, lines: list[str]) -> list[bool]:
+    """各行が、``` か ~~~ のコードブロックの中（始まりと終わりの行を含む）かを返す。
+
+    コードブロックの中は書いたとおりに出すので、only の印もリンクも読まない。
+    閉じ忘れると、そこから下の印がすべて読まれなくなるので、止める。
+    """
+    inside = []
+    fence = ""
+    fence_line = 0
+    for number, line in enumerate(lines, start=1):
+        match = FENCE.match(line)
+        if fence:
+            inside.append(True)
+            closes = match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence)
+            if closes and not match.group(2).strip():
+                fence = ""
+        elif match and not (match.group(1)[0] == "`" and "`" in match.group(2)):
+            fence = match.group(1)
+            fence_line = number
+            inside.append(True)
+        else:
+            inside.append(False)
+    if fence:
+        raise SpecError(f"{path}:{fence_line}: コードブロック（{fence}）が閉じていません")
+    return inside
+
+
+def code_checker(path: str, text: str) -> Callable[[int], bool]:
+    """文字の位置が、コードブロックかインラインコードの中かを答える関数を返す。"""
+    spans = []
+    position = 0
+    lines = text.split("\n")
+    for line, in_block in zip(lines, code_block_lines(path, lines)):
+        if in_block:
+            spans.append((position, position + len(line)))
+        else:
+            spans.extend((position + match.start(), position + match.end()) for match in INLINE_CODE.finditer(line))
+        position += len(line) + 1
+    starts = [start for start, _ in spans]
+
+    def in_code(position: int) -> bool:
+        index = bisect.bisect_right(starts, position) - 1
+        return index >= 0 and position < spans[index][1]
+
+    return in_code
+
+
 def filter_platform(path: str, text: str, platform: str, platforms: list[str]) -> str:
-    """`<!-- only: ios -->` の段落と、行末に同じ印を付けた行を、対象の OS のときだけ残す。"""
+    """`<!-- only: ios -->` の段落と、行末に同じ印を付けた行を、対象の OS のときだけ残す。
+
+    コードブロックの中は、印を読まず、空行も詰めない。
+    """
     def targets(raw: str, line_number: int) -> set[str]:
         names = {name.strip() for name in raw.split(",") if name.strip()}
         unknown = names - set(platforms)
@@ -124,33 +210,102 @@ def filter_platform(path: str, text: str, platform: str, platforms: list[str]) -
             raise SpecError(f"{path}:{line_number}: only に知らない OS があります: {raw!r}")
         return names
 
-    output = []
+    lines = text.splitlines()
+    output: list[str] = []
     block: set[str] | None = None
     block_line = 0
-    for number, line in enumerate(text.splitlines(), start=1):
-        if match := BLOCK_START.match(line):
-            if block is not None:
-                raise SpecError(f"{path}:{number}: only の中に only は書けません（{block_line} 行目から）")
-            block = targets(match.group(1), number)
-            block_line = number
-            continue
-        if BLOCK_END.match(line):
-            if block is None:
-                raise SpecError(f"{path}:{number}: 対応する <!-- only: … --> がありません")
-            block = None
-            continue
+    for number, (line, in_code) in enumerate(zip(lines, code_block_lines(path, lines)), start=1):
+        line_only = None
+        if not in_code:
+            if match := BLOCK_START.match(line):
+                if block is not None:
+                    raise SpecError(f"{path}:{number}: only の中に only は書けません（{block_line} 行目から）")
+                block = targets(match.group(1), number)
+                block_line = number
+                continue
+            if BLOCK_END.match(line):
+                if block is None:
+                    raise SpecError(f"{path}:{number}: 対応する <!-- only: … --> がありません")
+                block = None
+                continue
+            # 印の形は、出力しない行でも確かめる（もう片方の OS の段落の中の書き損じも、どの OS の生成でも止める）
+            if line_only := LINE_ONLY.search(line):
+                if block is not None:
+                    raise SpecError(f"{path}:{number}: only の中に only は書けません（{block_line} 行目から）")
+                line_only_targets = targets(line_only.group(1), number)
+                line = line[: line_only.start()]
+            if ONLY_LEFTOVER.search(INLINE_CODE.sub("", line)):
+                raise SpecError(
+                    f"{path}:{number}: only の印の形が違います"
+                    "（<!-- only: ios --> のように小文字で書く。行末の印の後ろには何も書かない。段落を囲むときは印だけの行にする）"
+                )
         if block is not None and platform not in block:
             continue
-        if match := LINE_ONLY.search(line):
-            if platform not in targets(match.group(1), number):
-                continue
-            line = line[: match.start()]
+        if line_only and platform not in line_only_targets:
+            continue
+        # 段落を除いた跡などで空行が続いたら、1 つにする（コードブロックの終わりの行は空行ではないので、中の空行とは混ざらない）
+        if not in_code and not line and output and not output[-1]:
+            continue
         output.append(line)
     if block is not None:
         raise SpecError(f"{path}:{block_line}: <!-- only: … --> が閉じていません")
 
-    result = "\n".join(output)
-    return re.sub(r"\n{3,}", "\n\n", result).strip("\n") + "\n"
+    return "\n".join(output).strip("\n") + "\n"
+
+
+def is_relative(href: str) -> bool:
+    """このリポジトリの中のファイルを指すリンクか（URL と、同じファイルの中のアンカーは違う）。"""
+    return not re.match(r"^[a-z][a-z0-9+.-]*:", href) and not href.startswith("#")
+
+
+def links(path: str, text: str) -> list[re.Match[str]]:
+    """コードブロックとインラインコードの外にある [文字](リンク先)。"""
+    in_code = code_checker(path, text)
+    return [match for match in LINK.finditer(text) if not in_code(match.start())]
+
+
+class Finder:
+    """文字列を前から順に探す。見つけた位置を覚えておき、同じ場所を何度も読まない（長い行でも遅くならない）。"""
+
+    def __init__(self, text: str, needle: str) -> None:
+        self.text = text
+        self.needle = needle
+        self.found = -1
+
+    def after(self, position: int) -> int:
+        """position 以降で最初に needle がある位置。無ければ文字列の長さ。position は、前に聞いた値以上で呼ぶ。"""
+        if self.found < position:
+            index = self.text.find(self.needle, position)
+            self.found = len(self.text) if index == -1 else index
+        return self.found
+
+
+def unsupported_relative_links(path: str, text: str) -> list[tuple[str, str]]:
+    """[文字](リンク先) 以外の形で書いた相対リンクを、(形の名前, リンク先) で返す。
+
+    この形は生成で書き換えられず、リンク先があるか・その OS に出すファイルかも確かめられない。
+    配った先で切れたリンクになるので、呼ぶ側で止める。
+    """
+    in_code = code_checker(path, text)
+    found = []
+    for match in REFERENCE_LINK.finditer(text):
+        found.append((match.start(), "参照式のリンク（[名前]: リンク先）", match.group(1)))
+    # ](<リンク先>) のリンク先は、同じ行の中の次の > まで（途中に < は入らない）
+    close, opening, newline = Finder(text, ">"), Finder(text, "<"), Finder(text, "\n")
+    for match in ANGLE_LINK.finditer(text):
+        end = close.after(match.end())
+        if end < min(opening.after(match.end()), newline.after(match.end())):
+            found.append((match.start(), "<> で囲んだリンク先", text[match.end() : end]))
+    # HTML のタグは、<a か <img から、同じ段落の中の次の > まで
+    close, blank = Finder(text, ">"), Finder(text, "\n\n")
+    end = 0
+    for tag in HTML_TAG.finditer(text):
+        if tag.start() < end or close.after(tag.end()) > blank.after(tag.end()):
+            continue
+        end = close.after(tag.end())
+        for match in HTML_LINK_ATTRIBUTE.finditer(text, tag.end(), end):
+            found.append((tag.start(), "HTML のリンク（href・src）", match.group(1) or match.group(2) or ""))
+    return [(kind, href) for position, kind, href in sorted(found) if not in_code(position) and is_relative(href)]
 
 
 def output_path(source: str, platform: str, documents: dict[str, Document]) -> str | None:
@@ -175,10 +330,13 @@ def rewrite_links(
 ) -> str:
     target = output_path(source, platform, documents)
     assert target is not None
+    in_code = code_checker(f"{app.key}/{source}", text)
+    for kind, href in unsupported_relative_links(f"{app.key}/{source}", text):
+        raise SpecError(f"{app.key}/{source}: {kind}は、相対パスでは書けません（[文字](リンク先) の形にする）: {href}")
 
     def replace(match: re.Match[str]) -> str:
         href = match.group(2)
-        if re.match(r"^[a-z][a-z0-9+.-]*:", href) or href.startswith("#"):
+        if in_code(match.start()) or not is_relative(href):
             return match.group(0)
         link, _, anchor = href.partition("#")
         resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), link))
@@ -217,7 +375,7 @@ def load_documents(app: App) -> dict[str, Document]:
         status, body = parse_front_matter(f"{app.key}/{path}", text, app.platforms)
         if path.startswith("platforms/") and text.startswith("---\n"):
             raise SpecError(f"{app.key}/{path}: platforms/ のファイルには status を書きません")
-        documents[path] = Document(path=path, status=status, body=body)
+        documents[path] = Document(app=app.key, path=path, status=status, body=body)
     if "README.md" not in documents:
         raise SpecError(f"{app.key}: README.md がありません")
     for platform in app.platforms:
@@ -314,10 +472,12 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
         file = ROOT / name
         if not file.exists():
             continue
-        body = filter_platform(name, file.read_text(encoding="utf-8"), platform, app.platforms)
-        for match in LINK.finditer(body):
-            if not re.match(r"^[a-z][a-z0-9+.-]*:", match.group(2)) and not match.group(2).startswith("#"):
-                raise SpecError(f"{name}: 各アプリに配るので、相対リンクは書けません（URL にする）: {match.group(2)}")
+        # どのアプリにも配るファイルなので、このアプリに無い OS の only も書ける（その分は出さないだけ）
+        body = filter_platform(name, file.read_text(encoding="utf-8"), platform, list(PLATFORM_LABELS))
+        relative = [match.group(2) for match in links(name, body) if is_relative(match.group(2))]
+        relative += [href for _, href in unsupported_relative_links(name, body)]
+        if relative:
+            raise SpecError(f"{name}: 各アプリに配るので、相対リンクは書けません（URL にする）: {relative[0]}")
         files[name] = (header(name, commit) + body).encode("utf-8")
 
     source = {
@@ -331,6 +491,8 @@ def render(app: App, platform: str, commit: str) -> dict[str, bytes]:
 
 
 def write_output(out: Path, files: dict[str, bytes]) -> None:
+    if out.exists() and not out.is_dir():
+        raise SpecError(f"{out}: 出力先がフォルダではありません")
     if out.exists() and any(out.iterdir()) and not (out / SOURCE_FILE).exists():
         # 手で書いた docs/spec/ を消さないよう、生成したことのある場所だけを置き換える
         raise SpecError(f"{out}: {SOURCE_FILE} が無いので、生成したものではないファイルを消してしまいます。中身を移してから空にしてください")
@@ -369,9 +531,9 @@ def check_undistributed_links(app: App, documents: dict[str, Document]) -> list[
     for path, document in documents.items():
         if output_path(path, app.platforms[0], documents) is not None or path.startswith("platforms/"):
             continue
-        for match in LINK.finditer(document.body):
+        for match in links(f"{app.key}/{path}", document.body):
             href = match.group(2)
-            if re.match(r"^[a-z][a-z0-9+.-]*:", href) or href.startswith("#"):
+            if not is_relative(href):
                 continue
             resolved = posixpath.normpath(posixpath.join(app.key, posixpath.dirname(path), href.partition("#")[0]))
             if not (ROOT / resolved).exists():
@@ -381,7 +543,10 @@ def check_undistributed_links(app: App, documents: dict[str, Document]) -> list[
 
 def command_check(_: argparse.Namespace) -> None:
     errors = []
-    for app in load_apps().values():
+    apps = load_apps()
+    # 同期のワークフローが最初に作る一覧。ここで作れなければ、main に入ってから Sync が落ちる
+    targets(apps)
+    for app in apps.values():
         try:
             errors.extend(check_undistributed_links(app, load_documents(app)))
             current, expected = readme_with_index(app)
@@ -404,18 +569,21 @@ def command_write_index(_: argparse.Namespace) -> None:
             print(f"{app.key}/README.md を書き直しました")
 
 
-def command_targets(_: argparse.Namespace) -> None:
-    targets = [
+def targets(apps: dict[str, App]) -> list[dict[str, str]]:
+    return [
         {
             "app": app.key,
             "platform": platform,
             "repository": repository,
             "repository_name": repository.split("/", 1)[1],
         }
-        for app in load_apps().values()
+        for app in apps.values()
         for platform, repository in app.repositories.items()
     ]
-    print(json.dumps(targets, ensure_ascii=False))
+
+
+def command_targets(_: argparse.Namespace) -> None:
+    print(json.dumps(targets(load_apps()), ensure_ascii=False))
 
 
 def main(argv: list[str] | None = None) -> int:
